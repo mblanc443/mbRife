@@ -278,40 +278,6 @@ void GenerateFrequency(void) {
   strComplete = "";
 }
 
-/*
-void GenerateFrequency(void) {
-  int freqValue = 0, 
-  int b9;
-  ilosc_f = 0; 
-  strComplete = "";
-  
-  //determine number of f in the ilness array
-  for (i=0; i < 10; i++) {                    
-     freqValue = frequencies[10*(selectedItem-1) + i];
-     if (freqValue > 0) ilosc_f ++;  // increment number of frequencies found in array
-  }
-  if (ilosc_f > 4) {strcpy(f_str, u8x8_u8toa(ilosc_f, 2)); b = 1;}
-  if (ilosc_f == 4){strcpy(f_str, u8x8_u8toa(8, 2)); b = 2;}
-  if (ilosc_f == 3){strcpy(f_str, u8x8_u8toa(6, 2)); b = 2;}
-  if (ilosc_f == 2){strcpy(f_str, u8x8_u8toa(6, 2)); b = 3;}
-  if (ilosc_f == 1){strcpy(f_str, u8x8_u8toa(5, 2)); b = 5;}  
-  for (i=0; i < ilosc_f; i++) {
-      f_gen = frequencies[10*(selectedItem-1) + i];
-      //Convert to a 2-digit string
-      strcpy(i_str, u8x8_u8toa(i+1, 2));       
-      DisplayTimerScreen();
-      //generating 1 minute (6 * 10sec)
-      for (a=0; a < b*6; a++){                    
-          beep(f_gen, 10000); // healing Freq, duration=10000msec=10sec
-      }   
-     delay (1000); // 1sec 
-  }
-  strComplete = "Complete!";
-  DisplayTimerScreen();
-  strComplete = "";
-}
-*/
-
 void PlayFrequency(int healingFrequency, int duration){
   tone(pinFrequencyOut, healingFrequency, duration);
   delay(duration);
