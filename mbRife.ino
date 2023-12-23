@@ -260,13 +260,7 @@ void GenerateFrequency(void) {
       intFreqToGenerate = frequencies[10*(selectedItem-1) + intFreqSeqNumber];
      
       //Convert f seq# to a 2-digit string 
-      //itoa((intFreqSeqNumber+1), charFreqSequentialNumber, 2);
       strcpy(charFreqSequentialNumber,u8x8_u8toa(intFreqSeqNumber+1,2));  //Convert to a 2-digit string
-      //itoa(intFreqToGenerate,charFrequency,DEC);
-      //strcpy(charFreqSequentialNumber,u8x8_u16toa(intFreqToGenerate+1,5));
-
-      //Serial.print("intFreqSeqNumber+1: "); Serial.print((intFreqSeqNumber+1)); Serial.print(" strFreqSequentialNumber: "); Serial.println(charFreqSequentialNumber);  //Serial.print(" strFreqSequentialNumberTmp: "); Serial.println(strFreqSequentialNumberTmp);
-      //Serial.print("intFreqToGenerate: "); Serial.print(intFreqToGenerate); Serial.print(" stringFrequency: "); Serial.println(charFrequency);
       //     
       DisplayTimerScreen();
       //generating 1 minute (6 * 10sec)
