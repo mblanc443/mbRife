@@ -109,10 +109,6 @@ void setup(void) {
   attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnChange, CHANGE);
 }
 
-//
-void OnChange() { //IRAM_ATTR // Interrupt routine just sets a flag when rotation is detected
-    encoderMoved = true;
-}
 
 void loop() {
     //
@@ -131,6 +127,11 @@ void loop() {
     }
     //
     ProcessPressExecute(); 
+}
+
+//
+void OnChange() { //IRAM_ATTR // Interrupt routine just sets a flag when rotation is detected
+    encoderMoved = true;
 }
 
 // intro screen
