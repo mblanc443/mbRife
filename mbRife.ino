@@ -79,10 +79,6 @@ char* strComplete;                  //the end of the session message
 
 int rotationCounter=0; // encoder turn counter (negative -> CCW)
 volatile bool encoderMoved = false;     // Flag from interrupt routine (moved = true)
-//
-void OnChange() { //IRAM_ATTR // Interrupt routine just sets a flag when rotation is detected
-    encoderMoved = true;
-}
 
 void setup(void) {
   u8g2.begin();
@@ -111,6 +107,11 @@ void setup(void) {
   //
   attachInterrupt(digitalPinToInterrupt(pinEncoderCW), OnChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnChange, CHANGE);
+}
+
+//
+void OnChange() { //IRAM_ATTR // Interrupt routine just sets a flag when rotation is detected
+    encoderMoved = true;
 }
 
 void loop() {
