@@ -5,8 +5,17 @@
 U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
 
 #define numberOfDiagnoses 31 //the number of diagnoses in the indexOfIllness[] array  //const int
-
-// russian list
+// english
+const char* choroby[index_choroby] = {
+  "Alcoholism","Angina","Stomachache","General Pain","Headaches",
+  "Infection","Acute pain","Back pain","Arthralgia","Toothache",
+  "No appetite","No taste","Motion sickness", "Hoarseness","Dolegl. gastric",
+  "Prostate ailments","Deafness","Flu","Hemorrhoids","Kidney stones", 
+  "Cough","Runny nose","Hair loss","Hypertension","Low pressure", 
+  "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
+  "Dizziness"
+  };
+/* // russian list
 const char* diagnoses[numberOfDiagnoses] = {
   "Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
   "Инфекция","Острая боль","Боль в спине 2","Артралгия","Зубная боль",
@@ -15,7 +24,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Кашель","Насморк","Потеря волос","Высокое давление","Низкое давление", 
   "Недуги Щитовидной","Запах изо рта","Герпес","Эпилепсия","Запоры",
   "Головокружение"
-}; 
+}; */
 
 const int frequencies[numberOfDiagnoses * 10] = { 
   10000,0,0,0,0,0,0,0,0,0, //"Alcoholism"
