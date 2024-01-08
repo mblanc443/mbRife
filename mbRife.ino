@@ -1,4 +1,4 @@
-// ArduinoMega Rife Machine generator 
+// Arduino Mega2560 & Mega2560-Pro Rife Machine generator 
 // - logically bounce protected encoder
 // - UTF8 cyrillic support
 // - Supports LEDs ST7920 12864 & GMG12864-06D ST7565 v2.x displays
