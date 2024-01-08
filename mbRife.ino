@@ -1,8 +1,20 @@
- // ArduinoMega Rife bioresonance generator
+// ArduinoMega Rife Machine generator 
+// - logically bounce protected encoder
+// - UTF8 cyrillic support
+// - Supports LEDs ST7920 12864 & GMG12864-06D ST7565 v2.x displays
 
 #include <U8g2lib.h>
 
 U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
+// uncomment for GMG12864-06D ST7565 v2.x display while above line to be commented out
+//U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
+
+// GMG12864-06D (powered by 3.3v as ST7565 is 2.1v controller)
+// Mega2560[pin# 13] -> GMG12864-06D[SCL pin# 4]
+//         pin# [11] ->              SI  pin# [5]
+//         pin# [10] ->              CS  pin# [1]
+//         pin# [7]  ->              RS  pin# [3] 
+//         pin# [8]  ->              RSE pin# [2]
 
 #define numberOfDiagnoses 31 //the number of diagnoses in the indexOfIllness[] array  //const int
 // english
@@ -15,7 +27,7 @@ const char* choroby[index_choroby] = {
   "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
   "Dizziness"
   };
-/* // russian list
+/* // uncomment for russian list while disable english above
 const char* diagnoses[numberOfDiagnoses] = {
   "Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
   "Инфекция","Острая боль","Боль в спине 2","Артралгия","Зубная боль",
