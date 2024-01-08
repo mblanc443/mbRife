@@ -106,6 +106,7 @@ volatile bool encoderMoved = false;     // Flag from interrupt routine (moved = 
 void setup(void) {
   u8g2.begin();
   u8g2.enableUTF8Print();
+  //u8g2.setContrast(80); // uncomment for GMG12864-06D display
   //	
   Serial.begin(9600);
   pinMode(pinLcdBacklight, OUTPUT);         
