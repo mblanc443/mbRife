@@ -20,7 +20,7 @@ U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*
 
 #define numberOfDiagnoses 31 //the number of diagnoses in the indexOfIllness[] array  //const int
 // english
-const char* choroby[index_choroby] = {
+const char* diagnoses[numberOfDiagnoses] = {
   "Alcoholism","Angina","Stomachache","General Pain","Headaches",
   "Infection","Acute pain","Back pain","Arthralgia","Toothache",
   "No appetite","No taste","Motion sickness", "Hoarseness","Dolegl. gastric",
