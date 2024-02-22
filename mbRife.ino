@@ -301,7 +301,7 @@ void GenerateFrequency(void) {
 }
 
 void PlayFrequency(int healingFrequency, int duration){
-  tone(pinFrequencyOut, healingFrequency*2, duration);
+  tone(pinFrequencyOut, healingFrequency, duration);
   delay(duration);
   noTone(pinFrequencyOut);
   delay(30);
