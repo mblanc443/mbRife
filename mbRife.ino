@@ -6,9 +6,9 @@
 
 #include <U8g2lib.h>
 
-U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
+//U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
 // uncomment for GMG12864-06D ST7565 v2.x display while above line to be commented out
-//U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
+U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
 
 // GMG12864-06D (powered directly from Mega2560 +3.3v as ST7565 is 2.1v controller)
 // below 5 signals resolved by 1k-2k resistor deviders between Mega2560 & GMG12864-06D
@@ -239,7 +239,7 @@ void ProcessPressExecute() {
 void ScrollItem(bool direction) {
     direction==SCROLL_UP?selectedItem++:selectedItem--;
     if (selectedItem < 1) {selectedItem = 1;}
-    if (selectedItem >= numberOfDiagnoses) { selectedItem = numberOfDiagnoses; }
+    if (selectedItem > numberOfDiagnoses) { selectedItem = 1; }
     pageOffset = CalulatePageOffset(selectedItem);
     //highlight item based on (P1-offset)
     highlightItem();
