@@ -18,7 +18,7 @@ U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*C
 //         pin# [7]  ->              RS  pin# [3] 
 //         pin# [8]  ->              RSE pin# [2]
 
-#define numberOfDiagnoses 31 //the number of diagnoses in the indexOfIllness[] array  //const int
+#define numberOfDiagnoses 33 //the number of diagnoses in the indexOfIllness[] array  //const int
 // english
 const char* diagnoses[numberOfDiagnoses] = {
   "Alcoholism","Angina","Stomachache","General Pain","Headaches",
@@ -27,7 +27,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Prostate ailments","Deafness","Flu","Hemorrhoids","Kidney stones", 
   "Cough","Runny nose","Hair loss","Hypertension","Low pressure", 
   "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
-  "Dizziness"
+  "Dizziness","Accending 1","Accending 2"
   };
 /* // uncomment for russian list while disable english above
 const char* diagnoses[numberOfDiagnoses] = {
@@ -37,7 +37,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Недуги простаты", "Глухота","Грипп","Геморой","Камни в почках", 
   "Кашель","Насморк","Потеря волос","Высокое давление","Низкое давление", 
   "Недуги Щитовидной","Запах изо рта","Герпес","Эпилепсия","Запоры",
-  "Головокружение"
+  "Головокружение", ,"Вознесение 1","вознесение 2"
 }; */
 
 const int frequencies[numberOfDiagnoses * 10] = { 
@@ -71,7 +71,9 @@ const int frequencies[numberOfDiagnoses * 10] = {
   2950,1900,1577,1550,1489,1488,629,464,450,383, //"General herpes",
   10000,880,802,787,727,700,650,600,210,125, //"Epilepsy"'
   3176,1550,880,832,802,787,776,727,444,422, //"Constipation",
-  1550,880,802,784,787,786,766,522,727,72       //"Dizziness",
+  1550,880,802,784,787,786,766,522,727,72,       //"Dizziness",
+  432,528,0,0,0,0,0,0,0,0,
+  174,285,396,417,639,741,852,963,528,528
 };
 
 #define pinEncoderCW  2  //encoder pin 2
