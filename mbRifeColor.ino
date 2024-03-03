@@ -212,13 +212,13 @@ void DisplayMainMenu(void) {
     // fill in diagnoses list
     for (int counter = pageOffset; counter < 6 + pageOffset; counter++) {
         if (counter <= numberOfDiagnoses - 1) {
-        //u8g2.setFont(u8g2_font_6x12_t_cyrillic);
-        tft.setCursor( 20, 40 + 20 * (counter-pageOffset) );
-        tft.setTextSize(2);
-         tft.setTextColor(ILI9341_GREENYELLOW);
-        tft.print( diagnoses[counter] );
-    }        
-  }
+           //tft.setFont(cyrillicFont);
+           tft.setCursor( 20, 40 + 20 * (counter-pageOffset) );
+           tft.setTextSize(2);
+           tft.setTextColor(ILI9341_GREENYELLOW);
+           tft.print( diagnoses[counter] );
+        }        
+    }
 }
 
 
