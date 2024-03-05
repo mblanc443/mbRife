@@ -84,7 +84,8 @@ const int frequencies[numberOfDiagnoses * 10] = {
 #define pinEncoderCCW 3
 #define pinBtnEnter 5     //encoder ENTER    
 #define pinFrequencyOut 4 //frequency out
-#define pinLcdBacklight 13
+#define pinLcdBacklight 13   // backlight control
+#define pinGenCS         9 // chip select for AS9833
 
 const int SCROLL_DOWN=0;
 const int SCROLL_UP=1;
@@ -115,7 +116,7 @@ void setup(void) {
   //u8g2.setContrast(80); // uncomment for GMG12864-06D display
   //	
   Serial.begin(9600);
-  gen.Begin();
+  gen.Begin(pinGenCS);
   gen.EnableOutput( true);
   //
   pinMode(pinLcdBacklight, OUTPUT);         
