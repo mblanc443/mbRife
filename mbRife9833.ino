@@ -310,10 +310,11 @@ void GenerateFrequency(void) {
 
 void PlayFrequency(int healingFrequency, int duration){
   gen.ApplySignal(SQUARE_WAVE, REG0, healingFrequency);
- // tone(pinFrequencyOut, healingFrequency, duration);
-  delay(duration);
- // noTone(pinFrequencyOut);
   gen.EnableOutput(true);
+ //
+  delay(duration);
+ // 
+  gen.EnableOutput(false);
 }
 
 // See https://www.pinteric.com/rotary.html
