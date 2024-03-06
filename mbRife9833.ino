@@ -7,9 +7,9 @@
 #include <AD9833.h>
 #include <U8g2lib.h>
 
-U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
+//U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
 // uncomment for GMG12864-06D ST7565 v2.x display while above line to be commented out
-//U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
+U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
 
 // GMG12864-06D (powered directly from Mega2560 +3.3v as ST7565 is 2.1v controller)
 // below 5 signals resolved by 1k-2k resistor deviders between Mega2560 & GMG12864-06D
@@ -21,6 +21,7 @@ U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*
 
 #define numberOfDiagnoses 31 //the number of diagnoses in the indexOfIllness[] array  //const int
 // english
+/*
 const char* diagnoses[numberOfDiagnoses] = {
   "Alcoholism","Angina","Stomachache","General Pain","Headaches",
   "Infection","Acute pain","Back pain","Arthralgia","Toothache",
@@ -30,7 +31,8 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
   "Dizziness"
   };
-/* // uncomment for russian list while disable english above
+  */
+// uncomment for russian list while disable english above
 const char* diagnoses[numberOfDiagnoses] = {
   "Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
   "Инфекция","Острая боль","Боль в спине 2","Артралгия","Зубная боль",
@@ -39,7 +41,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Кашель","Насморк","Потеря волос","Высокое давление","Низкое давление", 
   "Недуги Щитовидной","Запах изо рта","Герпес","Эпилепсия","Запоры",
   "Головокружение"
-}; */
+};
 
 const int frequencies[numberOfDiagnoses * 10] = { 
   10000,0,0,0,0,0,0,0,0,0, //"Alcoholism"
@@ -111,7 +113,7 @@ volatile bool inProgress = false;
 void setup(void) {
   u8g2.begin();
   u8g2.enableUTF8Print();
-  //u8g2.setContrast(80); // uncomment for GMG12864-06D display
+  u8g2.setContrast(20); // uncomment for GMG12864-06D display
   //	
   Serial.begin(9600);
   pinMode(pinLcdBacklight, OUTPUT);         
