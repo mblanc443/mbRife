@@ -3,16 +3,13 @@
 // - UTF8 cyrillic support
 // - Supports LEDs: 20pins ST7920 12864 &
 //                  13pins GMG12864-06D ST7565 v2.x displays
-
-#include <U8g2lib.h>
+// https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <AD9833.h>
-//SCLK -> D13/CLK  of Arduino
-//SDATA -> D11/MOSI of Arduino
-//CS of AD9833 will be setup by constructor in below call as pin9 for CS(chip select)
+#include <U8g2lib.h>
 
-//U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
+U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
 // uncomment for GMG12864-06D ST7565 v2.x display while above line to be commented out
-U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
+//U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
 
 // GMG12864-06D (powered directly from Mega2560 +3.3v as ST7565 is 2.1v controller)
 // below 5 signals resolved by 1k-2k resistor deviders between Mega2560 & GMG12864-06D
@@ -22,7 +19,7 @@ U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*C
 //         pin# [7]  ->              RS  pin# [3] 
 //         pin# [8]  ->              RSE pin# [2]
 
-#define numberOfDiagnoses 33 //the number of diagnoses in the indexOfIllness[] array  //const int
+#define numberOfDiagnoses 31 //the number of diagnoses in the indexOfIllness[] array  //const int
 // english
 const char* diagnoses[numberOfDiagnoses] = {
   "Alcoholism","Angina","Stomachache","General Pain","Headaches",
@@ -31,7 +28,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Prostate ailments","Deafness","Flu","Hemorrhoids","Kidney stones", 
   "Cough","Runny nose","Hair loss","Hypertension","Low pressure", 
   "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
-  "Dizziness","Accending 1","Accending 2"
+  "Dizziness"
   };
 /* // uncomment for russian list while disable english above
 const char* diagnoses[numberOfDiagnoses] = {
@@ -41,7 +38,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Недуги простаты", "Глухота","Грипп","Геморой","Камни в почках", 
   "Кашель","Насморк","Потеря волос","Высокое давление","Низкое давление", 
   "Недуги Щитовидной","Запах изо рта","Герпес","Эпилепсия","Запоры",
-  "Головокружение", ,"Вознесение 1","вознесение 2"
+  "Головокружение"
 }; */
 
 const int frequencies[numberOfDiagnoses * 10] = { 
@@ -75,17 +72,16 @@ const int frequencies[numberOfDiagnoses * 10] = {
   2950,1900,1577,1550,1489,1488,629,464,450,383, //"General herpes",
   10000,880,802,787,727,700,650,600,210,125, //"Epilepsy"'
   3176,1550,880,832,802,787,776,727,444,422, //"Constipation",
-  1550,880,802,784,787,786,766,522,727,72,       //"Dizziness",
-  432,528,0,0,0,0,0,0,0,0,
-  174,285,396,417,639,741,852,963,528,528
+  1550,880,802,784,787,786,766,522,727,72       //"Dizziness",
 };
 
-#define pinEncoderCW  2  //encoder pin 2
-#define pinEncoderCCW 3
-#define pinBtnEnter 5     //encoder ENTER    
-#define pinFrequencyOut 4 //frequency out
-#define pinLcdBacklight 13   // backlight control
-#define pinGenCS         9 // chip select for AS9833
+#define pinEncoderCW     2  // encoder 
+#define pinEncoderCCW    3  // encoder
+#define pinBtnEnter     21  // encoder ENTER    
+#define pinLcdBacklight 13
+#define pinGenCS         9  // CS for AD9833
+
+AD9833 gen(pinGenCS);  //connect FSYNC/CS to D9 of UNO or Nano
 
 const int SCROLL_DOWN=0;
 const int SCROLL_UP=1;
@@ -109,6 +105,8 @@ char* strComplete;                  //the end of the session message
 
 int rotationCounter=0; // encoder turn counter (negative -> CCW)
 volatile bool encoderMoved = false;     // Flag from interrupt routine (moved = true)
+volatile bool btnEnterPressed = false;  // Flag from Btn Enter interrupt routine
+volatile bool inProgress = false;
 
 void setup(void) {
   u8g2.begin();
@@ -116,15 +114,15 @@ void setup(void) {
   //u8g2.setContrast(80); // uncomment for GMG12864-06D display
   //	
   Serial.begin(9600);
-  gen.Begin(pinGenCS);
-  gen.EnableOutput( true);
-  //
   pinMode(pinLcdBacklight, OUTPUT);         
-  digitalWrite (pinLcdBacklight, LOW); //turning on the LCD backlight
-  pinMode(pinEncoderCW, INPUT);        // The module already has pullup resistors on board
-  pinMode(pinEncoderCCW, INPUT); 
-  pinMode(pinBtnEnter, INPUT_PULLUP);
-  
+  digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
+  pinMode(pinEncoderCW, INPUT_PULLUP);  // Encoder CW The module already has pullup resistors on board
+  pinMode(pinEncoderCCW, INPUT_PULLUP); // Encoder CCW
+  pinMode(pinBtnEnter, INPUT_PULLUP);   // Encoder button
+  // set up external generator
+  gen.Begin();  
+  gen.EnableOutput(false);
+
   selectedItem = 1; // highlight the first item
   pageOffset = 0;   // offset from the beginning of the array to the current page displayed
   // display intro 
@@ -139,8 +137,9 @@ void setup(void) {
       highlightItem(); 
   } while ( u8g2.nextPage() );
   //
-  attachInterrupt(digitalPinToInterrupt(pinEncoderCW), OnChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(pinEncoderCW), OnScrollChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnScrollChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(pinBtnEnter), OnEnterBtnChange, CHANGE);
 }
 
 
@@ -160,11 +159,17 @@ void loop() {
         }
     }
     //
-    ProcessPressExecute(); 
+    if (btnEnterPressed) {
+      ProcessPressExecute(); 
+    }
+}
+
+void OnEnterBtnChange() {
+  btnEnterPressed = true;
 }
 
 //
-void OnChange() { //IRAM_ATTR // Interrupt routine just sets a flag when rotation is detected
+void OnScrollChange() { //IRAM_ATTR // Interrupt routine just sets a flag when rotation is detected
     encoderMoved = true;
 }
 
@@ -174,7 +179,7 @@ void DisplayIntroScreen(void) {
    u8g2.drawStr( 5, 20,  "Dr. Royal Rife");
    u8g2.drawStr( 20, 37,  "Machine");
    u8g2.setFont(u8g2_font_6x12_te);
-   u8g2.drawStr( 15, 52,  "by kd2cmo 2023");
+   u8g2.drawStr( 15, 52,  "by kd2cmo 2024");
    u8g2.drawStr( 30, 62,  "wait...");
 }
 
@@ -230,18 +235,32 @@ void DisplayTimerScreen() {
 void ProcessPressExecute() {
   byte pinOutput = HIGH;
   byte pinOutputNext;
-
-      //ENTER button - "Therapy" mode
+    
+    //ENTER button - "Therapy" mode
     pinOutput = digitalRead(pinBtnEnter);            //reading state of button Enter
     pinOutputNext = digitalRead(pinBtnEnter);
     if (pinOutput == LOW and pinOutputNext == LOW) {   
         timeEndEnterButton = micros() - timeStart;
     } 
     if (timeEndEnterButton > 20 and pinOutputNext == HIGH) {
-        titleLine = diagnoses[selectedItem-1];
-        //
-        GenerateFrequency();
-        timeStart = 0; timeEndEnterButton = 0;
+        Serial.println("Button Enter pressed");
+        if (inProgress == true) {
+            Serial.println("Button Enter pressed while in progress!");
+            inProgress = false;            
+            // display first screen 
+            u8g2.firstPage();
+            do {
+                DisplayMainMenu(); 
+                highlightItem(); 
+            } while ( u8g2.nextPage() );            
+        } else {
+            Serial.println("Button Enter pressed while NOT in progress!");
+            inProgress = true;
+            titleLine = diagnoses[selectedItem-1];
+            //
+            GenerateFrequency();
+            timeStart = 0; timeEndEnterButton = 0;
+        }
     }
 }
 
@@ -309,11 +328,9 @@ void GenerateFrequency(void) {
 }
 
 void PlayFrequency(int healingFrequency, int duration){
-  gen.ApplySignal(SQUARE_WAVE, REG0, healingFrequency);
   gen.EnableOutput(true);
- //
+  gen.ApplySignal(SQUARE_WAVE, REG0, healingFrequency);
   delay(duration);
- // 
   gen.EnableOutput(false);
 }
 
