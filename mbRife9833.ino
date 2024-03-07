@@ -3,8 +3,7 @@
 // - UTF8 cyrillic support
 // - Supports LEDs: 20pins ST7920 12864 &
 //                  13pins GMG12864-06D ST7565 v2.x displays
-// https://github.com/Billwilliams1952/AD9833-Library-Arduino
-#include <AD9833.h>
+#include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <U8g2lib.h>
 
 //U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
