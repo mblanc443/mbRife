@@ -162,12 +162,12 @@ void loop() {
     }
     //
     if (btnEnterPressed) {
-      ProcessPressExecute(); 
+        ProcessPressExecute(); 
     }
 }
 
 void OnEnterBtnChange() {
-  btnEnterPressed = true;
+    btnEnterPressed = true;
 }
 
 //
@@ -198,15 +198,16 @@ void DisplayMainMenu(void) {
   }
 }
 
+//
 void DrawTitleFrame(void) {
-  u8g2.drawFrame( 0, 0 , 128, 64);  
-  u8g2.drawBox(0, 0, 128, 10);      
-  u8g2.setDrawColor(2);             //inverse the color
-  u8g2.setFontMode(1);              
-  u8g2.setFont(u8g2_font_6x12_t_cyrillic);
-  u8g2.setCursor(CalculatePositionX(titleLine), 8);
-  u8g2.print(titleLine);
-  u8g2.setDrawColor(1);             //reset to normal black on white
+    u8g2.drawFrame( 0, 0 , 128, 64);  
+    u8g2.drawBox(0, 0, 128, 10);      
+    u8g2.setDrawColor(2);             //inverse the color
+    u8g2.setFontMode(1);              
+    u8g2.setFont(u8g2_font_6x12_t_cyrillic);
+    u8g2.setCursor(CalculatePositionX(titleLine), 8);
+    u8g2.print(titleLine);
+    u8g2.setDrawColor(1);             //reset to normal black on white
 }
 
 // position calculated for utf8 chars with mixed and averaged with regular fonts
@@ -215,23 +216,23 @@ int CalculatePositionX(char * title) {
 }
 
 void DisplayTimerScreen() {
-  u8g2.firstPage();
-  do {
-    u8g2.setFont(u8g2_font_6x12_te);                // choosing small fonts
-    DrawTitleFrame();
-    u8g2.drawStr(37, 25, "Therapy");
-    u8g2.drawStr(18, 38, "Time:");
-    u8g2.drawStr(48, 38, treatmentTime);
-    u8g2.drawStr(65, 38, "minutes");
-    u8g2.setFont(u8g2_font_helvB14_te);             // choosing large fonts
-    if (strComplete == "") {
-        u8g2.setFont(u8g2_font_6x12_te);            // choosing small fonts
-        u8g2.drawStr(10, 58, "Sequence Number:");
-        //u8g2.drawStr(42, 58, charFrequency);       // show frequncy sequence number
-        u8g2.drawStr(110, 58, charFreqSequentialNumber); // show frequncy sequence number
-    }
-    if (strComplete != "") u8g2.drawStr(15, 58, strComplete);
-  } while ( u8g2.nextPage() );
+    u8g2.firstPage();
+    do {
+      u8g2.setFont(u8g2_font_6x12_te);                // choosing small fonts
+      DrawTitleFrame();
+      u8g2.drawStr(37, 25, "Therapy");
+      u8g2.drawStr(18, 38, "Time:");
+      u8g2.drawStr(48, 38, treatmentTime);
+      u8g2.drawStr(65, 38, "minutes");
+      u8g2.setFont(u8g2_font_helvB14_te);             // choosing large fonts
+      if (strComplete == "") {
+          u8g2.setFont(u8g2_font_6x12_te);            // choosing small fonts
+          u8g2.drawStr(10, 58, "Sequence Number:");
+          //u8g2.drawStr(42, 58, charFrequency);       // show frequncy sequence number
+          u8g2.drawStr(110, 58, charFreqSequentialNumber); // show frequncy sequence number
+      }
+      if (strComplete != "") u8g2.drawStr(15, 58, strComplete);
+    } while ( u8g2.nextPage() );
 }
 
 void ProcessPressExecute() {
@@ -245,9 +246,7 @@ void ProcessPressExecute() {
         timeEndEnterButton = micros() - timeStart;
     } 
     if (timeEndEnterButton > 20 and pinOutputNext == HIGH) {
-        Serial.println("Button Enter pressed");
         if (inProgress == true) {
-            Serial.println("Button Enter pressed while in progress!");
             inProgress = false;            
             // display first screen 
             u8g2.firstPage();
@@ -256,7 +255,7 @@ void ProcessPressExecute() {
                 highlightItem(); 
             } while ( u8g2.nextPage() );            
         } else {
-            Serial.println("Button Enter pressed while NOT in progress!");
+            //Serial.println("Button Enter pressed while NOT in progress!");
             inProgress = true;
             titleLine = diagnoses[selectedItem-1];
             //
@@ -293,8 +292,8 @@ void highlightItem(void){                        //displays text and cursor
 }
 
 void GenerateFrequency(void) {
-  int freqValue = 0; 
-    
+  int freqValue = 0;
+  
   numberOfFreqInSet = 0; 
   intFreqToGenerate = 0;
   strComplete = "";
@@ -304,12 +303,8 @@ void GenerateFrequency(void) {
      freqValue = frequencies[10*(selectedItem-1) + counter];
      if (freqValue > 0) numberOfFreqInSet++;   // increment number of frequencies found in array
   }
-  // make up treatment time
-  if (numberOfFreqInSet > 4) {strcpy(treatmentTime, u8x8_u8toa(numberOfFreqInSet, 2)); timeFragment = 1;}
-  if (numberOfFreqInSet == 4){strcpy(treatmentTime, u8x8_u8toa(8, 2)); timeFragment = 2;}
-  if (numberOfFreqInSet == 3){strcpy(treatmentTime, u8x8_u8toa(6, 2)); timeFragment = 2;}
-  if (numberOfFreqInSet == 2){strcpy(treatmentTime, u8x8_u8toa(6, 2)); timeFragment = 3;}
-  if (numberOfFreqInSet == 1){strcpy(treatmentTime, u8x8_u8toa(5, 2)); timeFragment = 5;}  
+  //
+  timeFragment = 10/numberOfFreqInSet
   //
   for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
       intFreqToGenerate = frequencies[10*(selectedItem-1) + intFreqSeqNumber];
@@ -320,21 +315,18 @@ void GenerateFrequency(void) {
       DisplayTimerScreen();
       //generating 1 minute (6 * 10sec)
       for (int counterA=0; counterA < timeFragment * 6; counterA++){                    
-          PlayFrequency(intFreqToGenerate, 10000); // healing Freq, in 10sec fragments: duration=10000msec=10sec
+          //PlayFrequency(intFreqToGenerate, 10000); // healing Freq, in 10sec fragments: duration=10000msec=10sec
+          gen.EnableOutput(true);
+          gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
+          delay(timeFragment);
+          gen.EnableOutput(false);
       }   
-     delay (1000); // 1sec 
   }
   strComplete = "Finished!";
   DisplayTimerScreen();
   strComplete = "";
 }
 
-void PlayFrequency(int healingFrequency, int duration){
-  gen.EnableOutput(true);
-  gen.ApplySignal(SQUARE_WAVE, REG0, healingFrequency);
-  delay(duration);
-  gen.EnableOutput(false);
-}
 
 // See https://www.pinteric.com/rotary.html
 int8_t AnalyzeEncoderChange() {
@@ -359,3 +351,4 @@ int8_t AnalyzeEncoderChange() {
     lrsum = 0;
     return 0;
 }
+
