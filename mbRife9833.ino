@@ -318,7 +318,7 @@ void GenerateFrequency(void) {
       delay(fragmentTime * 60000);
   }
   gen.EnableOutput(false);
-  strComplete = "Session Over!";
+  strComplete = "Finished!";
   DisplayTimerScreen();
   strComplete = "";
 }
