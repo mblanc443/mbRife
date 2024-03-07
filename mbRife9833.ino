@@ -90,7 +90,7 @@ const int SCROLL_UP=1;
 
 byte selectedItem; //currenly selected diagnose
 byte pageOffset;   //offset from the top of the current page
-byte timeFragment;
+byte fragmentTime;
 
 unsigned long  timeStart, timeEndEnterButton; //, timeEndPressButton, timeEndDownButton;
 
@@ -293,7 +293,6 @@ void highlightItem(void){                        //displays text and cursor
 
 void GenerateFrequency(void) {
   int freqValue = 0;
-  
   numberOfFreqInSet = 0; 
   intFreqToGenerate = 0;
   strComplete = "";
@@ -304,8 +303,9 @@ void GenerateFrequency(void) {
      if (freqValue > 0) numberOfFreqInSet++;   // increment number of frequencies found in array
   }
   //
-  timeFragment = 10/numberOfFreqInSet
+  fragmentTime = 10/numberOfFreqInSet;
   //
+  gen.EnableOutput(true);
   for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
       intFreqToGenerate = frequencies[10*(selectedItem-1) + intFreqSeqNumber];
      
@@ -313,16 +313,12 @@ void GenerateFrequency(void) {
       strcpy(charFreqSequentialNumber,u8x8_u8toa(intFreqSeqNumber+1,2));  //Convert to a 2-digit string
       //     
       DisplayTimerScreen();
-      //generating 1 minute (6 * 10sec)
-      for (int counterA=0; counterA < timeFragment * 6; counterA++){                    
-          //PlayFrequency(intFreqToGenerate, 10000); // healing Freq, in 10sec fragments: duration=10000msec=10sec
-          gen.EnableOutput(true);
-          gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
-          delay(timeFragment);
-          gen.EnableOutput(false);
-      }   
+      //
+      gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);        
+      delay(fragmentTime * 60000);
   }
-  strComplete = "Finished!";
+  gen.EnableOutput(false);
+  strComplete = "Session Over!";
   DisplayTimerScreen();
   strComplete = "";
 }
