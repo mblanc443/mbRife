@@ -18,7 +18,7 @@ U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*C
 //         pin# [7]  ->              RS  pin# [3] 
 //         pin# [8]  ->              RSE pin# [2]
 
-#define numberOfDiagnoses 31 //the number of diagnoses in the indexOfIllness[] array  //const int
+#define numberOfDiagnoses 33 //the number of diagnoses in the indexOfIllness[] array  //const int
 // english
 /*
 const char* diagnoses[numberOfDiagnoses] = {
@@ -28,7 +28,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Prostate ailments","Deafness","Flu","Hemorrhoids","Kidney stones", 
   "Cough","Runny nose","Hair loss","Hypertension","Low pressure", 
   "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
-  "Dizziness"
+  "Dizziness","Accending 1","Accending 2"
   };
   */
 // uncomment for russian list while disable english above
