@@ -3,6 +3,7 @@
 // - UTF8 cyrillic support
 // - Supports LEDs: 20pins ST7920 12864 &
 //                  13pins GMG12864-06D ST7565 v2.x displays
+#include <EEPROM.h>
 #include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <U8g2lib.h>
 
@@ -91,7 +92,6 @@ const int SCROLL_UP=1;
 
 byte selectedItem; //currenly selected diagnose
 byte pageOffset;   //offset from the top of the current page
-byte fragmentTime;
 
 unsigned long  timeStart, timeEndEnterButton; //, timeEndPressButton, timeEndDownButton;
 
@@ -99,7 +99,8 @@ char* titleLine = "Diagnose:";      //name of the selected sickness
 byte numberOfFreqInSet;  
 
 // values to display as strings                        
-char treatmentTime[3];              
+char treatmentTime[3] = {"10"};  
+byte fragmentTime;            
 char charFreqSequentialNumber[3];   
 char charFrequency[5];
 uint16_t intFreqToGenerate;         
@@ -109,14 +110,19 @@ char* strComplete;                  //the end of the session message
 int rotationCounter=0; // encoder turn counter (negative -> CCW)
 volatile bool encoderMoved = false;     // Flag from interrupt routine (moved = true)
 volatile bool btnEnterPressed = false;  // Flag from Btn Enter interrupt routine
+
+// eeprom related
+byte eepromAddress = 0;
+int itemToSelect;
+
 volatile bool inProgress = false;
 
 void setup(void) {
+  Serial.begin(9600);
   u8g2.begin();
   u8g2.enableUTF8Print();
   u8g2.setContrast(20); // uncomment for GMG12864-06D display
   //	
-  Serial.begin(9600);
   pinMode(pinLcdBacklight, OUTPUT);         
   digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
   pinMode(pinEncoderCW, INPUT_PULLUP);  // Encoder CW The module already has pullup resistors on board
@@ -137,12 +143,20 @@ void setup(void) {
   u8g2.firstPage();
   do {
       DisplayMainMenu(); 
-      highlightItem(); 
+      highlightItem(selectedItem, pageOffset); 
   } while ( u8g2.nextPage() );
   //
   attachInterrupt(digitalPinToInterrupt(pinEncoderCW), OnScrollChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnScrollChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(pinBtnEnter), OnEnterBtnChange, CHANGE);
+
+  // read EEPROM and update UI if memorized
+  itemToSelect = EEPROM.read(eepromAddress);  
+  //
+  if (itemToSelect > 0) { 
+      Serial.print ("EEPROM Item Memorized: "); Serial.println(itemToSelect);
+      SetSelectedItem(itemToSelect); 
+  }
 }
 
 
@@ -165,6 +179,13 @@ void loop() {
     if (btnEnterPressed) {
         ProcessPressExecute(); 
     }
+}
+
+// TO DO
+void SetSelectedItem(byte itemToSelect) {
+    pageOffset = CalulatePageOffset(itemToSelect);
+    //highlight item based on (P1-offset)
+    highlightItem(itemToSelect, pageOffset);
 }
 
 void OnEnterBtnChange() {
@@ -253,11 +274,14 @@ void ProcessPressExecute() {
             u8g2.firstPage();
             do {
                 DisplayMainMenu(); 
-                highlightItem(); 
+               // highlightItem(0,0); 
             } while ( u8g2.nextPage() );            
         } else {
             //Serial.println("Button Enter pressed while NOT in progress!");
             inProgress = true;
+            // save selected itme into EEPROM
+            EEPROM.update(eepromAddress, selectedItem);  
+
             titleLine = diagnoses[selectedItem-1];
             //
             GenerateFrequency();
@@ -273,7 +297,7 @@ void ScrollItem(bool direction) {
     if (selectedItem > numberOfDiagnoses) { selectedItem = 1; }
     pageOffset = CalulatePageOffset(selectedItem);
     //highlight item based on (P1-offset)
-    highlightItem();
+    highlightItem(selectedItem, pageOffset);
 }
 
 //calculate first item on the selected page
@@ -281,13 +305,13 @@ byte CalulatePageOffset(byte currentItem) {
     return ((currentItem-1) - ((currentItem-1) % 5));
 }
 
-void highlightItem(void){                        //displays text and cursor
+void highlightItem(byte selectItem, byte offset){                        //displays text and cursor
   u8g2.firstPage();
   do {
-     u8g2.drawHLine( 5, 11 + (selectedItem-pageOffset)*10, 118);
-     u8g2.drawHLine( 5, 2 + (selectedItem-pageOffset)*10, 118);
-     u8g2.drawVLine( 5, 2 + (selectedItem-pageOffset)*10, 10);
-     u8g2.drawVLine( 122, 2 + (selectedItem-pageOffset)*10, 10);     
+     u8g2.drawHLine( 5, 11 + (selectItem-offset)*10, 118);
+     u8g2.drawHLine( 5, 2 + (selectItem-offset)*10, 118);
+     u8g2.drawVLine( 5, 2 + (selectItem-offset)*10, 10);
+     u8g2.drawVLine( 122, 2 + (selectItem-offset)*10, 10);     
      DisplayMainMenu();
   } while ( u8g2.nextPage() );
 }
@@ -326,7 +350,7 @@ void GenerateFrequency(void) {
 
 // See https://www.pinteric.com/rotary.html
 int8_t AnalyzeEncoderChange() {
-    encoderMoved = false; // Reset the flag that brought us here (from ISR) 
+    encoderMoved = false; // Reset the flag that brought us here (from ISR) 
     static uint8_t lrmem = 3;
     static int lrsum = 0;
     static int8_t TRANS[] = {0, -1, 1, 14, 1, 0, 14, -1, -1, 14, 0, 1, 14, 1, -1, 0};
@@ -347,4 +371,3 @@ int8_t AnalyzeEncoderChange() {
     lrsum = 0;
     return 0;
 }
-
