@@ -303,19 +303,18 @@ void GenerateFrequency(void) {
      if (freqValue > 0) numberOfFreqInSet++;   // increment number of frequencies found in array
   }
   //
-  fragmentTime = 10/numberOfFreqInSet;
+  fragmentTime = 10/numberOfFreqInSet*60000; // time splitted between existing frequences proportionally
   //
   gen.EnableOutput(true);
   for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
       intFreqToGenerate = frequencies[10*(selectedItem-1) + intFreqSeqNumber];
-     
       //Convert f seq# to a 2-digit string 
       strcpy(charFreqSequentialNumber,u8x8_u8toa(intFreqSeqNumber+1,2));  //Convert to a 2-digit string
       //     
       DisplayTimerScreen();
       //
       gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);        
-      delay(fragmentTime * 60000);
+      delay(fragmentTime);
   }
   gen.EnableOutput(false);
   strComplete = "Finished!";
