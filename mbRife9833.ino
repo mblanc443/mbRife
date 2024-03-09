@@ -7,8 +7,9 @@
 #include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <U8g2lib.h>
 
+// uncomment one of the constructors for GMG12864-06D ST7565 v2.x display or ST7920_128X64
+// the GMG12864-06D ST7565 v2.x display also requires to uncomment line SetContrast(num) in setup()
 //U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
-// uncomment for GMG12864-06D ST7565 v2.x display while above line to be commented out
 U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
 
 // GMG12864-06D (powered directly from Mega2560 +3.3v as ST7565 is 2.1v controller)
@@ -100,7 +101,7 @@ byte numberOfFreqInSet;
 
 // values to display as strings                        
 char treatmentTime[3] = {"10"};  
-byte fragmentTime;            
+long fragmentTime;            
 char charFreqSequentialNumber[3];   
 char charFrequency[5];
 uint16_t intFreqToGenerate;         
@@ -142,7 +143,7 @@ void setup(void) {
   // display first screen 
   u8g2.firstPage();
   do {
-      DisplayMainMenu(); 
+      DisplayMainMenu(0); 
       highlightItem(selectedItem, pageOffset); 
   } while ( u8g2.nextPage() );
   //
@@ -154,7 +155,7 @@ void setup(void) {
   itemToSelect = EEPROM.read(eepromAddress);  
   //
   if (itemToSelect > 0) { 
-      Serial.print ("EEPROM Item Memorized: "); Serial.println(itemToSelect);
+      Serial.print ("Reading from EEPROM: "); Serial.println(itemToSelect);
       SetSelectedItem(itemToSelect); 
   }
 }
@@ -183,9 +184,12 @@ void loop() {
 
 // TO DO
 void SetSelectedItem(byte itemToSelect) {
-    pageOffset = CalulatePageOffset(itemToSelect);
-    //highlight item based on (P1-offset)
-    highlightItem(itemToSelect, pageOffset);
+    int pgOffset = CalulatePageOffset(itemToSelect);
+    u8g2.firstPage();
+    do {
+        DisplayMainMenu(pgOffset); 
+        highlightItem(itemToSelect, pgOffset); 
+    } while ( u8g2.nextPage() );
 }
 
 void OnEnterBtnChange() {
@@ -207,14 +211,14 @@ void DisplayIntroScreen(void) {
    u8g2.drawStr( 30, 62,  "wait...");
 }
 
-void DisplayMainMenu(void) {
+void DisplayMainMenu(int pgOffset) {
     // frame
     DrawTitleFrame();
     // fill in diagnoses list
-    for (int counter = pageOffset; counter < 6 + pageOffset; counter++) {
+    for (int counter = pgOffset; counter < 6 + pgOffset; counter++) {
         if (counter <= numberOfDiagnoses - 1) {
         u8g2.setFont(u8g2_font_6x12_t_cyrillic);
-        u8g2.setCursor( 10, 20 + 10 * (counter-pageOffset) );  
+        u8g2.setCursor( 10, 20 + 10 * (counter-pgOffset) );  
         u8g2.print( diagnoses[counter] );
     }        
   }
@@ -273,14 +277,14 @@ void ProcessPressExecute() {
             // display first screen 
             u8g2.firstPage();
             do {
-                DisplayMainMenu(); 
+                DisplayMainMenu(pageOffset); 
                // highlightItem(0,0); 
             } while ( u8g2.nextPage() );            
         } else {
-            //Serial.println("Button Enter pressed while NOT in progress!");
             inProgress = true;
             // save selected itme into EEPROM
             EEPROM.update(eepromAddress, selectedItem);  
+            Serial.print ("Updating EEPROM: "); Serial.println(selectedItem);
 
             titleLine = diagnoses[selectedItem-1];
             //
@@ -312,7 +316,7 @@ void highlightItem(byte selectItem, byte offset){                        //displ
      u8g2.drawHLine( 5, 2 + (selectItem-offset)*10, 118);
      u8g2.drawVLine( 5, 2 + (selectItem-offset)*10, 10);
      u8g2.drawVLine( 122, 2 + (selectItem-offset)*10, 10);     
-     DisplayMainMenu();
+     DisplayMainMenu(offset);
   } while ( u8g2.nextPage() );
 }
 
@@ -328,7 +332,7 @@ void GenerateFrequency(void) {
      if (freqValue > 0) numberOfFreqInSet++;   // increment number of frequencies found in array
   }
   //
-  fragmentTime = 10/numberOfFreqInSet*60000; // time splitted between existing frequences proportionally
+  fragmentTime = (10/numberOfFreqInSet)*60000; // time splitted between existing frequences proportionally
   //
   gen.EnableOutput(true);
   for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
