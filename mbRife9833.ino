@@ -7,10 +7,9 @@
 #include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <U8g2lib.h>
 
-// uncomment one of the constructors for GMG12864-06D ST7565 v2.x display or ST7920_128X64
-// the GMG12864-06D ST7565 v2.x display also requires to uncomment line SetContrast(num) in setup()
-//U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
-U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
+U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
+// uncomment for GMG12864-06D ST7565 v2.x display while above line to be commented out
+//U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
 
 // GMG12864-06D (powered directly from Mega2560 +3.3v as ST7565 is 2.1v controller)
 // below 5 signals resolved by 1k-2k resistor deviders between Mega2560 & GMG12864-06D
@@ -20,7 +19,7 @@ U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*C
 //         pin# [7]  ->              RS  pin# [3] 
 //         pin# [8]  ->              RSE pin# [2]
 
-#define numberOfDiagnoses 33 //the number of diagnoses in the indexOfIllness[] array  //const int
+#define numberOfDiagnoses 34 //the number of diagnoses in the indexOfIllness[] array  //const int
 // english
 /*
 const char* diagnoses[numberOfDiagnoses] = {
@@ -30,7 +29,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Prostate ailments","Deafness","Flu","Hemorrhoids","Kidney stones", 
   "Cough","Runny nose","Hair loss","Hypertension","Low pressure", 
   "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
-  "Dizziness","Accending 1","Accending 2"
+  "Dizziness","Accending 1","Accending 2", "H.Clark Zapper"
   };
   */
 // uncomment for russian list while disable english above
@@ -41,7 +40,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Недуги простаты", "Глухота","Грипп","Геморой","Камни в почках", 
   "Кашель","Насморк","Потеря волос","Высокое давление","Низкое давление", 
   "Недуги Щитовидной","Запах изо рта","Герпес","Эпилепсия","Запоры",
-  "Головокружение" ,"Вознесение 1","вознесение 2"
+  "Головокружение" ,"Вознесение 1","вознесение 2", "Hulda Clark"
 };
 
 const int frequencies[numberOfDiagnoses * 10] = { 
@@ -77,7 +76,8 @@ const int frequencies[numberOfDiagnoses * 10] = {
   3176,1550,880,832,802,787,776,727,444,422, //"Constipation",
   1550,880,802,784,787,786,766,522,727,72,       //"Dizziness",
   432,528,0,0,0,0,0,0,0,0,
-  174,285,396,417,639,741,852,963,528,528
+  174,285,396,417,639,741,852,963,528,528,
+  32000,0,0,0,0,0,0,0,0,0
 };
 
 #define pinEncoderCW     2  // encoder 
@@ -85,11 +85,14 @@ const int frequencies[numberOfDiagnoses * 10] = {
 #define pinBtnEnter     21  // encoder ENTER    
 #define pinLcdBacklight 13
 #define pinGenCS         9  // CS for AD9833
+#define pinBeepOut       4
 
 AD9833 gen(pinGenCS);  //connect FSYNC/CS to D9 of UNO or Nano
 
 const int SCROLL_DOWN=0;
 const int SCROLL_UP=1;
+const int ONE_BEEP=1;
+const int THREE_BEEPS=3;
 
 byte selectedItem; //currenly selected diagnose
 byte pageOffset;   //offset from the top of the current page
@@ -122,9 +125,9 @@ void setup(void) {
   Serial.begin(9600);
   u8g2.begin();
   u8g2.enableUTF8Print();
-  u8g2.setContrast(20); // uncomment for GMG12864-06D display
+  //u8g2.setContrast(20); // uncomment for GMG12864-06D display
   //	
-  pinMode(pinLcdBacklight, OUTPUT);         
+  pinMode(pinLcdBacklight, OUTPUT);
   digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
   pinMode(pinEncoderCW, INPUT_PULLUP);  // Encoder CW The module already has pullup resistors on board
   pinMode(pinEncoderCCW, INPUT_PULLUP); // Encoder CCW
@@ -157,6 +160,7 @@ void setup(void) {
   if (itemToSelect > 0) { 
       Serial.print ("Reading from EEPROM: "); Serial.println(itemToSelect);
       SetSelectedItem(itemToSelect); 
+      selectedItem = itemToSelect;
   }
 }
 
@@ -333,6 +337,9 @@ void GenerateFrequency(void) {
   }
   //
   fragmentTime = (10/numberOfFreqInSet)*60000; // time splitted between existing frequences proportionally
+  
+  Serial.print(" Num of Freq in Set: "); Serial.print(numberOfFreqInSet);
+  Serial.print(" Fragment Length in Min: "); Serial.println(fragmentTime); 
   //
   gen.EnableOutput(true);
   for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
@@ -344,13 +351,29 @@ void GenerateFrequency(void) {
       //
       gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);        
       delay(fragmentTime);
+      PlayTone(ONE_BEEP);
   }
   gen.EnableOutput(false);
   strComplete = "Finished!";
+  //
+  PlayTone(THREE_BEEPS);
   DisplayTimerScreen();
+  delay(3000);
+  // go to previously selected page
+  SetSelectedItem(selectedItem); 
+  //
   strComplete = "";
 }
 
+// signals between frequency switch and at the end of the session
+void PlayTone(int numberOfBeeps) {
+  for (int count = 0;   count < numberOfBeeps; count++ ) {
+      tone(pinBeepOut, 2000, 800);
+      delay(800);
+      noTone(pinBeepOut);
+      delay(500);
+  } 
+}
 
 // See https://www.pinteric.com/rotary.html
 int8_t AnalyzeEncoderChange() {
