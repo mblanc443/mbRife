@@ -7,9 +7,9 @@
 #include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <U8g2lib.h>
 
-U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
+//U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
 // uncomment for GMG12864-06D ST7565 v2.x display while above line to be commented out
-//U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
+U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
 
 // GMG12864-06D (powered directly from Mega2560 +3.3v as ST7565 is 2.1v controller)
 // below 5 signals resolved by 1k-2k resistor deviders between Mega2560 & GMG12864-06D
@@ -96,24 +96,17 @@ const int THREE_BEEPS=3;
 
 byte selectedItem; //currenly selected diagnose
 byte pageOffset;   //offset from the top of the current page
-
 unsigned long  timeStart, timeEndEnterButton; //, timeEndPressButton, timeEndDownButton;
-
 char* titleLine = "Diagnose:";      //name of the selected sickness
- 
-
 // values to display as strings                        
 char treatmentTime[3] = {"10"};  
 char charFreqSequentialNumber[3];   
 char charFrequency[5];
 uint16_t intFreqToGenerate;         
 char* strComplete;                  //the end of the session message
-
-
 int rotationCounter=0; // encoder turn counter (negative -> CCW)
 volatile bool encoderMoved = false;     // Flag from interrupt routine (moved = true)
 volatile bool btnEnterPressed = false;  // Flag from Btn Enter interrupt routine
-
 // eeprom related
 byte eepromAddress = 0;
 int itemToSelect;
@@ -124,7 +117,7 @@ void setup(void) {
   Serial.begin(9600);
   u8g2.begin();
   u8g2.enableUTF8Print();
-  //u8g2.setContrast(20); // uncomment for GMG12864-06D display
+  u8g2.setContrast(20); // uncomment for GMG12864-06D display
   //	
   pinMode(pinLcdBacklight, OUTPUT);
   digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
@@ -287,10 +280,9 @@ void ProcessPressExecute() {
             inProgress = true;
             // save selected itme into EEPROM
             EEPROM.update(eepromAddress, selectedItem);  
-            Serial.print ("Updating EEPROM: "); Serial.println(selectedItem);
-
+            // display title on top
             titleLine = diagnoses[selectedItem-1];
-            //
+            // prepare and invoke external generator
             GenerateFrequency();
             timeStart = 0; timeEndEnterButton = 0;
         }
@@ -312,6 +304,7 @@ byte CalulatePageOffset(byte currentItem) {
     return ((currentItem-1) - ((currentItem-1) % 5));
 }
 
+// draw square box around the selection or highlight
 void highlightItem(byte selectItem, byte offset){                        //displays text and cursor
   u8g2.firstPage();
   do {
@@ -323,6 +316,7 @@ void highlightItem(byte selectItem, byte offset){                        //displ
   } while ( u8g2.nextPage() );
 }
 
+// actual frequency formed and passed to ext AD9833
 void GenerateFrequency(void) {
  int freqValue = 0;
  float fragmentTime;
@@ -350,9 +344,10 @@ void GenerateFrequency(void) {
       //
       gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);        
       delay(fragmentTime);
+      // beep with one beep after each frequency change
       PlayTone(ONE_BEEP);
   }
-  gen.EnableOutput(false);
+  gen.EnableOutput(false); // disable output after each frequency block ends
   strComplete = "Finished!";
   //
   PlayTone(THREE_BEEPS);
