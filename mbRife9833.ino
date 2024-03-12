@@ -361,7 +361,7 @@ void GenerateFrequency(void) {
 
 // signals between frequency switch and at the end of the session
 void PlayTone(int numberOfBeeps) {
-  for (int count = 0;   count < numberOfBeeps; count++ ) {
+  for (int count = 0;   count < numberOfBeeps-1; count++ ) {
       tone(pinBeepOut, 2000, 1000);
       delay(1000);
       noTone(pinBeepOut);
