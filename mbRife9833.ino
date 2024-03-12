@@ -35,7 +35,7 @@ const char* diagnoses[numberOfDiagnoses] = {
 // uncomment for russian list while disable english above
 const char* diagnoses[numberOfDiagnoses] = {
   "Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
-  "Инфекция","Острая боль","Боль в спине 2","Артралгия","Зубная боль",
+  "Инфекция","Острая боль","Боль в спине","Артралгия","Зубная боль",
   "Нет аппетита","Нет вкуса","Морская болезнь","Охриплость","Долегл. желудочный",
   "Недуги простаты", "Глухота","Грипп","Геморой","Камни в почках", 
   "Кашель","Насморк","Потеря волос","Высокое давление","Низкое давление", 
@@ -100,11 +100,10 @@ byte pageOffset;   //offset from the top of the current page
 unsigned long  timeStart, timeEndEnterButton; //, timeEndPressButton, timeEndDownButton;
 
 char* titleLine = "Diagnose:";      //name of the selected sickness
-byte numberOfFreqInSet;  
+ 
 
 // values to display as strings                        
 char treatmentTime[3] = {"10"};  
-long fragmentTime;            
 char charFreqSequentialNumber[3];   
 char charFrequency[5];
 uint16_t intFreqToGenerate;         
@@ -325,7 +324,10 @@ void highlightItem(byte selectItem, byte offset){                        //displ
 }
 
 void GenerateFrequency(void) {
-  int freqValue = 0;
+ int freqValue = 0;
+ float fragmentTime;
+ float numberOfFreqInSet; 
+
   numberOfFreqInSet = 0; 
   intFreqToGenerate = 0;
   strComplete = "";
@@ -336,10 +338,7 @@ void GenerateFrequency(void) {
      if (freqValue > 0) numberOfFreqInSet++;   // increment number of frequencies found in array
   }
   //
-  fragmentTime = (10/numberOfFreqInSet)*60000; // time splitted between existing frequences proportionally
-  
-  Serial.print(" Num of Freq in Set: "); Serial.print(numberOfFreqInSet);
-  Serial.print(" Fragment Length in Min: "); Serial.println(fragmentTime); 
+  fragmentTime = 10 / numberOfFreqInSet * 60000; // time splitted between existing frequences proportionally in milliseconds 60000ms = 1min
   //
   gen.EnableOutput(true);
   for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
@@ -368,8 +367,8 @@ void GenerateFrequency(void) {
 // signals between frequency switch and at the end of the session
 void PlayTone(int numberOfBeeps) {
   for (int count = 0;   count < numberOfBeeps; count++ ) {
-      tone(pinBeepOut, 2000, 800);
-      delay(800);
+      tone(pinBeepOut, 2000, 1000);
+      delay(1000);
       noTone(pinBeepOut);
       delay(500);
   } 
