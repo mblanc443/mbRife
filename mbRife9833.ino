@@ -25,7 +25,7 @@ U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*C
 const char* diagnoses[numberOfDiagnoses] = {
   "Alcoholism","Angina","Stomachache","General Pain","Headaches",
   "Infection","Acute pain","Back pain","Arthralgia","Toothache",
-  "No appetite","No taste","Motion sickness", "Hoarseness","Dolegl. gastric",
+  "No appetite","No taste","Motion sickness", "Hoarseness","Gastric Ulcer",
   "Prostate ailments","Deafness","Flu","Hemorrhoids","Kidney stones", 
   "Cough","Runny nose","Hair loss","Hypertension","Low pressure", 
   "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
@@ -36,11 +36,11 @@ const char* diagnoses[numberOfDiagnoses] = {
 const char* diagnoses[numberOfDiagnoses] = {
   "Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
   "Инфекция","Острая боль","Боль в спине","Артралгия","Зубная боль",
-  "Нет аппетита","Нет вкуса","Морская болезнь","Охриплость","Долегл. желудочный",
+  "Нет аппетита","Нет вкуса","Морская болезнь","Охриплость","Язва желудка",
   "Недуги простаты", "Глухота","Грипп","Геморой","Камни в почках", 
   "Кашель","Насморк","Потеря волос","Высокое давление","Низкое давление", 
   "Недуги Щитовидной","Запах изо рта","Герпес","Эпилепсия","Запоры",
-  "Головокружение" ,"Вознесение 1","Вознесение 2", "Hulda Clark"
+  "Головокружение" ,"Вознесение 1","Вознесение 2", "H.Clark Zapper"
 };
 
 const int frequencies[numberOfDiagnoses * 10] = { 
@@ -80,12 +80,13 @@ const int frequencies[numberOfDiagnoses * 10] = {
   32000,0,0,0,0,0,0,0,0,0
 };
 
-#define pinEncoderCW     2  // encoder 
-#define pinEncoderCCW    3  // encoder
-#define pinBtnEnter     21  // encoder ENTER    
-#define pinLcdBacklight 13
-#define pinGenCS         9  // CS for AD9833
-#define pinBeepOut       4
+#define pinEncoderCW         2 // encoder 
+#define pinEncoderCCW        3 // encoder
+#define pinBtnEnter         21 // encoder ENTER    
+#define pinLcdBacklight     13 // on/off lcd backlight
+#define pinGenCS             9 // CS for AD9833
+#define pinBeepOut           4 // beep at each frequency and 3 beeps at the end
+#define pinLcdBrighnessdCtrl 5 // valika request to reduce current and save battery
 
 AD9833 gen(pinGenCS);  //connect FSYNC/CS to D9 of UNO or Nano
 
@@ -103,8 +104,8 @@ char treatmentTime[3] = {"10"};
 char charFreqSequentialNumber[3];   
 char charFrequency[5];
 uint16_t intFreqToGenerate;         
-char* strComplete;                  //the end of the session message
-int rotationCounter=0; // encoder turn counter (negative -> CCW)
+char* strComplete;                      //the end of the session message
+int rotationCounter=0;                  // encoder turn counter (negative -> CCW)
 volatile bool encoderMoved = false;     // Flag from interrupt routine (moved = true)
 volatile bool btnEnterPressed = false;  // Flag from Btn Enter interrupt routine
 // eeprom related
@@ -113,18 +114,19 @@ int itemToSelect;
 
 volatile bool inProgress = false;
 
+// runs once
 void setup(void) {
   Serial.begin(9600);
   u8g2.begin();
+  u8g2.setContrast(20); // uncomment only for GMG12864-06D display
   u8g2.enableUTF8Print();
-  u8g2.setContrast(20); // uncomment for GMG12864-06D display
-  //	
   pinMode(pinLcdBacklight, OUTPUT);
   digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
+  digitalWrite (pinLcdBrighnessdCtrl,HIGH);// optional: controls brighness of LCD by removing short from a backlight power resistor (~68ohm) while in session
   pinMode(pinEncoderCW, INPUT_PULLUP);  // Encoder CW The module already has pullup resistors on board
   pinMode(pinEncoderCCW, INPUT_PULLUP); // Encoder CCW
   pinMode(pinBtnEnter, INPUT_PULLUP);   // Encoder button
-  // set up external generator
+  // set up external generator AD0933
   gen.Begin();  
   gen.EnableOutput(false);
 
@@ -156,7 +158,7 @@ void setup(void) {
   }
 }
 
-
+// main loop
 void loop() {
     //
     if (encoderMoved) {
@@ -178,7 +180,7 @@ void loop() {
     }
 }
 
-// TO DO
+// sets previously used item after unit turned on 
 void SetSelectedItem(byte itemToSelect) {
     int pgOffset = CalulatePageOffset(itemToSelect);
     u8g2.firstPage();
@@ -193,7 +195,7 @@ void OnEnterBtnChange() {
 }
 
 //
-void OnScrollChange() { //IRAM_ATTR // Interrupt routine just sets a flag when rotation is detected
+void OnScrollChange() { // IRQ routine sets a flag when rotation is detected
     encoderMoved = true;
 }
 
@@ -220,7 +222,7 @@ void DisplayMainMenu(int pgOffset) {
   }
 }
 
-//
+// Draw main window w/ diagnose on top
 void DrawTitleFrame(void) {
     u8g2.drawFrame( 0, 0 , 128, 64);  
     u8g2.drawBox(0, 0, 128, 10);      
@@ -234,10 +236,18 @@ void DrawTitleFrame(void) {
 
 // position calculated for utf8 chars with mixed and averaged with regular fonts
 int CalculatePositionX(char * title) {
-    return (64-(strlen(title)*2));
+   // 5 pixels per char + one pixel for space
+   return (128/2-(strlen(title)*(5+1)/2));
 }
 
-void DisplayTimerScreen() {
+void DisplayTimerScreen(String frequency, String frequencySquence) {
+    // concatenate all details into
+    String strStatus = String("Seq:" + frequencySquence+1 + " Freq:" + frequency + "Hz ");
+    int intStrLength = strStatus.length();
+    // allocate buffer for converter to char
+    char* status = new char[intStrLength+1]; //char * cstr = new char [str.length()+1];
+    strStatus.toCharArray(status, intStrLength);
+    //  
     u8g2.firstPage();
     do {
       u8g2.setFont(u8g2_font_6x12_te);                // choosing small fonts
@@ -249,9 +259,7 @@ void DisplayTimerScreen() {
       u8g2.setFont(u8g2_font_helvB14_te);             // choosing large fonts
       if (strComplete == "") {
           u8g2.setFont(u8g2_font_6x12_te);            // choosing small fonts
-          u8g2.drawStr(10, 58, "Sequence Number:");
-          //u8g2.drawStr(42, 58, charFrequency);       // show frequncy sequence number
-          u8g2.drawStr(110, 58, charFreqSequentialNumber); // show frequncy sequence number
+          if (frequency.length() > 0 ) { u8g2.drawStr(10, 58, status); };
       }
       if (strComplete != "") u8g2.drawStr(15, 58, strComplete);
     } while ( u8g2.nextPage() );
@@ -320,7 +328,9 @@ void highlightItem(byte selectItem, byte offset){                        //displ
 void GenerateFrequency(void) {
  int freqValue = 0;
  float fragmentTime;
- float numberOfFreqInSet; 
+ float numberOfFreqInSet;
+ String strFreqToGenerate;
+ String strSeqNumber;
 
   numberOfFreqInSet = 0; 
   intFreqToGenerate = 0;
@@ -335,12 +345,13 @@ void GenerateFrequency(void) {
   fragmentTime = 10 / numberOfFreqInSet * 60000; // time splitted between existing frequences proportionally in milliseconds 60000ms = 1min
   //
   gen.EnableOutput(true);
+  digitalWrite (pinLcdBrighnessdCtrl, LOW); // disable LCD high britness
   for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
       intFreqToGenerate = frequencies[10*(selectedItem-1) + intFreqSeqNumber];
-      //Convert f seq# to a 2-digit string 
-      strcpy(charFreqSequentialNumber,u8x8_u8toa(intFreqSeqNumber+1,2));  //Convert to a 2-digit string
-      //     
-      DisplayTimerScreen();
+      //
+      strFreqToGenerate = String(intFreqToGenerate);
+      strSeqNumber = String(intFreqSeqNumber);
+      DisplayTimerScreen(strFreqToGenerate, strSeqNumber);
       //
       gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);        
       delay(fragmentTime);
@@ -349,9 +360,10 @@ void GenerateFrequency(void) {
   }
   gen.EnableOutput(false); // disable output after each frequency block ends
   strComplete = "Finished!";
-  //
+    //
   PlayTone(THREE_BEEPS);
-  DisplayTimerScreen();
+  DisplayTimerScreen("", "");
+  digitalWrite (pinLcdBrighnessdCtrl,HIGH); // enable LCD high britness
   delay(3000);
   // go to previously selected page
   SetSelectedItem(selectedItem); 
