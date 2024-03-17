@@ -144,7 +144,7 @@ void setup(void) {
   u8g2.firstPage();
   do {
       DisplayMainMenu(0); 
-      highlightItem(selectedItem, pageOffset); 
+      HighlightSelectedItem(selectedItem, pageOffset); 
   } while ( u8g2.nextPage() );
   //
   attachInterrupt(digitalPinToInterrupt(pinEncoderCW), OnScrollChange, CHANGE);
@@ -189,10 +189,11 @@ void SetSelectedItem(byte itemToSelect) {
     u8g2.firstPage();
     do {
         DisplayMainMenu(pgOffset); 
-        highlightItem(itemToSelect, pgOffset); 
+        HighlightSelectedItem(itemToSelect, pgOffset); 
     } while ( u8g2.nextPage() );
 }
 
+//
 void OnEnterBtnChange() {
     btnEnterPressed = true;
 }
@@ -212,6 +213,7 @@ void DisplayIntroScreen(void) {
    u8g2.drawStr( 30, 62,  "wait...");
 }
 
+//
 void DisplayMainMenu(int pgOffset) {
     // frame
     DrawTitleFrame();
@@ -239,14 +241,14 @@ void DrawTitleFrame(void) {
 
 // position calculated for utf8 chars with mixed and averaged with regular fonts
 int CalculatePositionX(char * title) {
-   // 5 pixels per char + one pixel for space
-   return (128/2-(strlen(title)*(5+1)/2));
+    //return (128/2-(strlen(title)*(5+1)/2)); // perfect centering works for english only
+    return (10); // TO DO   
 }
 
 //
 void DisplayTreatmentInProgressScreen(String frequency, String frequencySquence) {
     // concatenate all details into
-    String strStatus = String("Seq:" + frequencySquence+1 + " Freq:" + frequency + "Hz ");
+    String strStatus = String("Seq:" + frequencySquence + " Freq:" + frequency + "Hz ");
     int intStrLength = strStatus.length();
     // allocate buffer for converter to char pointer
     char* status = new char[intStrLength+1]; //char * cstr = new char [str.length()+1];
@@ -308,7 +310,7 @@ void ScrollItem(bool direction) {
     if (selectedItem > numberOfDiagnoses) { selectedItem = 1; }
     pageOffset = CalulatePageOffset(selectedItem);
     //highlight item based on (P1-offset)
-    highlightItem(selectedItem, pageOffset);
+    HighlightSelectedItem(selectedItem, pageOffset);
 }
 
 //calculate first item on the selected page
@@ -354,8 +356,8 @@ void GenerateFrequency(void) {
       intFreqToGenerate = frequencies[10*(selectedItem-1) + intFreqSeqNumber];
       //
       strFreqToGenerate = String(intFreqToGenerate, DEC);
-      strSeqNumber = String(intFreqSeqNumber, DEC);
-      DisplayTimerScreen(strFreqToGenerate, strSeqNumber);
+      strSeqNumber = String(intFreqSeqNumber+1, DEC);
+      DisplayTreatmentInProgressScreen(strFreqToGenerate, strSeqNumber);
       //
       gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);        
       delay(fragmentTime);
@@ -366,7 +368,7 @@ void GenerateFrequency(void) {
   strComplete = "Finished!";
     //
   PlayTone(THREE_BEEPS);
-  DisplayTimerScreen("", "");
+  DisplayTreatmentInProgressScreen("", "");
   digitalWrite (pinLcdBrighnessdCtrl,HIGH); // enable LCD high britness
   delay(3000); // 3sec
   // go to previously selected page
