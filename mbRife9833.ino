@@ -244,7 +244,7 @@ int CalculatePositionX(char * title) {
 }
 
 //
-void DisplayTimerScreen(String frequency, String frequencySquence) {
+void DisplayTreatmentInProgressScreen(String frequency, String frequencySquence) {
     // concatenate all details into
     String strStatus = String("Seq:" + frequencySquence+1 + " Freq:" + frequency + "Hz ");
     int intStrLength = strStatus.length();
@@ -317,7 +317,7 @@ byte CalulatePageOffset(byte currentItem) {
 }
 
 // draw square box around the selection or highlight
-void highlightItem(byte selectItem, byte offset){                        //displays text and cursor
+void HighlightSelectedItem(byte selectItem, byte offset){                        //displays text and cursor
   u8g2.firstPage();
   do {
      u8g2.drawHLine( 5, 11 + (selectItem-offset)*10, 118);
