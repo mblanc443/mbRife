@@ -94,6 +94,9 @@ const int SCROLL_DOWN=0;
 const int SCROLL_UP=1;
 const int ONE_BEEP=1;
 const int THREE_BEEPS=3;
+const int PIEZO_BEEP_TONE = 2000; // Adjust to your loudwdest piezo beeper 1000 to 4000hz
+const int PEIZO_BEEP_LENGTH = 1000;
+const int PEIZO_BEEP_PAUSE = 500;
 
 byte selectedItem; //currenly selected diagnose
 byte pageOffset;   //offset from the top of the current page
@@ -240,11 +243,12 @@ int CalculatePositionX(char * title) {
    return (128/2-(strlen(title)*(5+1)/2));
 }
 
+//
 void DisplayTimerScreen(String frequency, String frequencySquence) {
     // concatenate all details into
     String strStatus = String("Seq:" + frequencySquence+1 + " Freq:" + frequency + "Hz ");
     int intStrLength = strStatus.length();
-    // allocate buffer for converter to char
+    // allocate buffer for converter to char pointer
     char* status = new char[intStrLength+1]; //char * cstr = new char [str.length()+1];
     strStatus.toCharArray(status, intStrLength);
     //  
@@ -349,8 +353,8 @@ void GenerateFrequency(void) {
   for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
       intFreqToGenerate = frequencies[10*(selectedItem-1) + intFreqSeqNumber];
       //
-      strFreqToGenerate = String(intFreqToGenerate);
-      strSeqNumber = String(intFreqSeqNumber);
+      strFreqToGenerate = String(intFreqToGenerate, DEC);
+      strSeqNumber = String(intFreqSeqNumber, DEC);
       DisplayTimerScreen(strFreqToGenerate, strSeqNumber);
       //
       gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);        
@@ -364,7 +368,7 @@ void GenerateFrequency(void) {
   PlayTone(THREE_BEEPS);
   DisplayTimerScreen("", "");
   digitalWrite (pinLcdBrighnessdCtrl,HIGH); // enable LCD high britness
-  delay(3000);
+  delay(3000); // 3sec
   // go to previously selected page
   SetSelectedItem(selectedItem); 
   //
@@ -374,10 +378,10 @@ void GenerateFrequency(void) {
 // signals between frequency switch and at the end of the session
 void PlayTone(int numberOfBeeps) {
   for (int count = 0;   count < numberOfBeeps-1; count++ ) {
-      tone(pinBeepOut, 2000, 1000);
-      delay(1000);
+      tone(pinBeepOut, PIEZO_BEEP_TONE, PEIZO_BEEP_LENGTH); 
+      delay(PEIZO_BEEP_LENGTH);
       noTone(pinBeepOut);
-      delay(500);
+      delay(PEIZO_BEEP_PAUSE);
   } 
 }
 
