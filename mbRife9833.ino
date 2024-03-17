@@ -271,6 +271,7 @@ void DisplayTreatmentInProgressScreen(String frequency, String frequencySquence)
     } while ( u8g2.nextPage() );
 }
 
+//
 void ProcessPressExecute() {
   byte pinOutput = HIGH;
   byte pinOutputNext;
@@ -379,7 +380,7 @@ void GenerateFrequency(void) {
 
 // signals between frequency switch and at the end of the session
 void PlayTone(int numberOfBeeps) {
-  for (int count = 0;   count < numberOfBeeps-1; count++ ) {
+  for (int count = 1;   count <= numberOfBeeps; count++ ) {
       tone(pinBeepOut, PIEZO_BEEP_TONE, PEIZO_BEEP_LENGTH); 
       delay(PEIZO_BEEP_LENGTH);
       noTone(pinBeepOut);
