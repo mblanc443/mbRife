@@ -76,9 +76,9 @@ const int frequencies[numberOfDiagnoses * 10] = {
   10000,880,802,787,727,700,650,600,210,125,      //"Epilepsy"
   3176,1550,880,832,802,787,776,727,444,422,      //"Constipation"
   1550,880,802,784,787,786,766,522,727,72,        //"Dizziness"
-  432,528,0,0,0,0,0,0,0,0,
-  174,285,396,417,639,741,852,963,528,528,
-  32000,0,0,0,0,0,0,0,0,0
+  432,528,0,0,0,0,0,0,0,0,                        //"Accending 1"
+  174,285,396,417,639,741,852,963,528,528,        //"Accending 2"
+  32000,0,0,0,0,0,0,0,0,0                         //"Halda Clark Zapper"
 };
 
 #define pinEncoderCW         2 // encoder 
@@ -89,7 +89,7 @@ const int frequencies[numberOfDiagnoses * 10] = {
 #define pinBeepOut           4 // beep at each frequency and 3 beeps at the end
 #define pinLcdBrighnessdCtrl 5 // request to reduce current and save battery, normally shortens background 68ohm resistor of ST7565_ERC12864 through any npn transistor and releases during the treatment to save battery life
 #define pinBatteryLevel     A0 // request to measure battery voltage - 40kohm in sum of two resistors devider. Middle connected to pin A0, top to Vcc and bottom to GND
-
+ 
 AD9833 gen(pinGenCS);  //connect FSYNC/CS to D9 of UNO or Nano
 //
 const int SCROLL_DOWN=0;
@@ -105,7 +105,7 @@ const float R2 = 8000.0;  // 7.5k
 float referenceVoltage = 5.0; // Float for Reference Voltage
 int voltageAnalogPoints = 0;  // Integer for ADC value
 float relativeVoltage = 0.0;
-float voltageOutput = 0.0;    // 
+float voltageOutput = 0.0;
 //
 byte selectedItem; //currenly selected diagnose
 byte pageOffset;   //offset from the top of the current page
@@ -262,7 +262,7 @@ void DrawTitleFrame(void) {
 // position calculated for utf8 chars with mixed and averaged with regular fonts
 int CalculatePositionX(char * title) {
     //return (128/2-(strlen(title)*(5+1)/2)); // perfect centering works for english only
-    return (10); // TO DO   
+    return (2); // TO DO   
 }
 
 //
@@ -290,15 +290,15 @@ void DisplayTreatInProgressScreen(String frequency, String frequencySquence) {
       u8g2.setDrawColor(2);                            // inverse the color
       u8g2.setFontMode(1);                             // is transparent
       u8g2.setFont(u8g2_font_3x5im_tr);                // or u8g2_font_tiny_simon_mr github.com/olikraus/u8g2/wiki/fntgrpbitfontmaker2 and /olikraus/u8g2/wiki/fntlist8#3-pixel-height
-      u8g2.drawStr(105, 8, batteryVoltage);
-      u8g2.setFont(u8g2_font_6x12_te);                // choosing small fonts
+      u8g2.drawStr(128-strVoltage.length()*4, 8, batteryVoltage);            // 105
+      u8g2.setFont(u8g2_font_6x12_te);                 // choosing small fonts
       u8g2.drawStr(37, 25, "Therapy");
       u8g2.drawStr(18, 38, "Time:");
       u8g2.drawStr(48, 38, treatmentTime);
-      u8g2.drawStr(65, 38, "minutes");
-      u8g2.setFont(u8g2_font_helvB14_te);             // choosing large fonts
+      u8g2.drawStr(65, 38, "minutes");                 //
+      u8g2.setFont(u8g2_font_helvB14_te);              // choosing large fonts
       if (strComplete == "") {
-          u8g2.setFont(u8g2_font_6x12_te);            // choosing small fonts
+          u8g2.setFont(u8g2_font_6x12_te);             // choosing small fonts
           if (frequency.length() > 0 ) { u8g2.drawStr(10, 58, status); };
       }
       if (strComplete != "") u8g2.drawStr(15, 58, strComplete);
