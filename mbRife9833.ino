@@ -19,11 +19,11 @@ U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*
 //         pin# [7]  ->              RS  pin# [3] 
 //         pin# [8]  ->              RSE pin# [2]
 
-#define numberOfDiagnoses 34 //the number of diagnoses in the indexOfIllness[] array  //const int
+#define numberOfDiagnoses 35 //the number of diagnoses in the indexOfIllness[] array  //const int
 // english
 /*
 const char* diagnoses[numberOfDiagnoses] = {
-  "Alcoholism","Angina","Stomachache","General Pain","Headaches",
+  "Good Sleep","Alcoholism","Angina","Stomachache","General Pain","Headaches",
   "Infection","Acute pain","Back pain","Arthralgia","Toothache",
   "No appetite","No taste","Motion sickness", "Hoarseness","Gastric Ulcer",
   "Prostate ailments","Deafness","Flu","Hemorrhoids","Kidney stones", 
@@ -34,7 +34,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   */
 // uncomment for russian list while disable english above
 const char* diagnoses[numberOfDiagnoses] = {
-  "Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
+  "Хороший сон","Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
   "Инфекция","Острая боль","Боль в спине","Артралгия","Зубная боль",
   "Нет аппетита","Нет вкуса","Морская болезнь","Охриплость","Язва желудка",
   "Недуги простаты", "Глухота","Грипп","Геморой","Камни в почках", 
@@ -44,37 +44,38 @@ const char* diagnoses[numberOfDiagnoses] = {
 };
 
 const int frequencies[numberOfDiagnoses * 10] = { 
-  10000,0,0,0,0,0,0,0,0,0, //"Alcoholism"
-  787,776,727,690,465,428,660,0,0,0, //"Angina"
-  10000,3000,95,0,0,0,0,0,0,0, //"Stomachache"
-  3000,2720,95,666,80,40,0,0,0,0, //"Pain in general"
-  10000,144,160,520,304,0,0,0,0,0, //"Headache"
-  3000,95,880,1550,802,787,776,727,0,0, //"Infection"
-  3000,95,10000,1550,802,880,787,727,690,666, //"Acute pain"
-  787,784,776,728,727,465,432,0,0,0, //"Back pain"
-  160,500,1600,5000,324,528,0,0,0,0, //"Arthralgia"
+  4,0,0,0,0,0,0,0,0,0,                            // "Good Sleep"
+  10000,0,0,0,0,0,0,0,0,0,                        //"Alcoholism"
+  787,776,727,690,465,428,660,0,0,0,              //"Angina"
+  10000,3000,95,0,0,0,0,0,0,0,                    //"Stomachache"
+  3000,2720,95,666,80,40,0,0,0,0,                 //"General Pain"
+  10000,144,160,520,304,0,0,0,0,0,                //"Headache"
+  3000,95,880,1550,802,787,776,727,0,0,           //"Infection"
+  3000,95,10000,1550,802,880,787,727,690,666,     //"Acute pain"
+  787,784,776,728,727,465,432,0,0,0,              //"Back pain"
+  160,500,1600,5000,324,528,0,0,0,0,              //"Arthralgia"
   5170,3000,2720,2489,1800,1600,1550,880,832,666, //"Toothache" 
-  10000,465,444,1865,125,95,72,880,787,727, //"No appetite"
-  10000,20,0,0,0,0,0,0,0,0, //"No taste"
-  10000,5000,648,624,600,465,440,648,444,1865, //"Motion sickness"
-  880,760,727,0,0,0,0,0,0,0, //"Hoarseness"
-  10000,1550,802,880,832,787,727,465,0,0, //"Dolegl. gastric",
-  2050,880,1550,802,787,727,465,20,0,0, //"Bladder and prostate ailments",
-  10000,1550,880,802,787,727,20,0,0,0, //"Deafness",
-  954,889,841,787,763,753,742,523,513,482, //"Flu",
-  4474,6117,774,1550,447,880,802,727,0,0, //"Hemorrhoids",
-  10000,444,727,787,880,6000,3000,1552,0,0, //"Kidney stones",
-  7760,7344,3702,3672,1550,1500,1234,776,766,728, //"Cough",
-  1800,1713,1550,802,800,880,787,727,444,20, //"runny nose",
-  10000,5000,2720,2170,1552,880,800,787,727,465, //"Hair loss",
-  10000,3176,2112,95,324,528,880,787,727,304, //"Hypertension",
-  727,787,880,0,0,0,0,0,0,0, //"Low pressure",
-  16000,10000,160,80,35,0,0,0,0,0, //"Disease. thyroid gland"
-  1550,802,880,787,727,0,0,0,0,0, //"Bad breath",
-  2950,1900,1577,1550,1489,1488,629,464,450,383, //"General herpes",
-  10000,880,802,787,727,700,650,600,210,125, //"Epilepsy"'
-  3176,1550,880,832,802,787,776,727,444,422, //"Constipation",
-  1550,880,802,784,787,786,766,522,727,72,       //"Dizziness",
+  10000,465,444,1865,125,95,72,880,787,727,       //"No appetite"
+  10000,20,0,0,0,0,0,0,0,0,                       //"No taste"
+  10000,5000,648,624,600,465,440,648,444,1865,    //"Motion sickness"
+  880,760,727,0,0,0,0,0,0,0,                      //"Hoarseness"
+  10000,1550,802,880,832,787,727,465,0,0,         //"Gastric Ulcer"
+  2050,880,1550,802,787,727,465,20,0,0,           //"Bladder and prostate ailments"
+  10000,1550,880,802,787,727,20,0,0,0,            //"Deafness"
+  954,889,841,787,763,753,742,523,513,482,        //"Flu"
+  4474,6117,774,1550,447,880,802,727,0,0,         //"Hemorrhoids"
+  10000,444,727,787,880,6000,3000,1552,0,0,       //"Kidney stones"
+  7760,7344,3702,3672,1550,1500,1234,776,766,728, //"Cough"
+  1800,1713,1550,802,800,880,787,727,444,20,      //"runny nose"
+  10000,5000,2720,2170,1552,880,800,787,727,465,  //"Hair loss"
+  10000,3176,2112,95,324,528,880,787,727,304,     //"Hypertension"
+  727,787,880,0,0,0,0,0,0,0,                      //"Low pressure"
+  16000,10000,160,80,35,0,0,0,0,0,                //"Thyroid Gland disease"
+  1550,802,880,787,727,0,0,0,0,0,                 //"Bad breath"
+  2950,1900,1577,1550,1489,1488,629,464,450,383,  //"General herpes"
+  10000,880,802,787,727,700,650,600,210,125,      //"Epilepsy"
+  3176,1550,880,832,802,787,776,727,444,422,      //"Constipation"
+  1550,880,802,784,787,786,766,522,727,72,        //"Dizziness"
   432,528,0,0,0,0,0,0,0,0,
   174,285,396,417,639,741,852,963,528,528,
   32000,0,0,0,0,0,0,0,0,0
@@ -86,8 +87,8 @@ const int frequencies[numberOfDiagnoses * 10] = {
 #define pinLcdBacklight     13 // on/off lcd backlight
 #define pinGenCS             9 // CS for AD9833
 #define pinBeepOut           4 // beep at each frequency and 3 beeps at the end
-#define pinLcdBrighnessdCtrl 5 // valika request to reduce current and save battery
-#define pinBatteryLevel     A0 // valika request to measure voltage
+#define pinLcdBrighnessdCtrl 5 // request to reduce current and save battery, normally shortens background 68ohm resistor of ST7565_ERC12864 through any npn transistor and releases during the treatment to save battery life
+#define pinBatteryLevel     A0 // request to measure battery voltage - 40kohm in sum of two resistors devider. Middle connected to pin A0, top to Vcc and bottom to GND
 
 AD9833 gen(pinGenCS);  //connect FSYNC/CS to D9 of UNO or Nano
 //
@@ -104,7 +105,7 @@ const float R2 = 8000.0;  // 7.5k
 float referenceVoltage = 5.0; // Float for Reference Voltage
 int voltageAnalogPoints = 0;  // Integer for ADC value
 float relativeVoltage = 0.0;
-float voltageOutput = 0.0;
+float voltageOutput = 0.0;    // 
 //
 byte selectedItem; //currenly selected diagnose
 byte pageOffset;   //offset from the top of the current page
