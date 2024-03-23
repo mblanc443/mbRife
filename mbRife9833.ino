@@ -7,9 +7,9 @@
 #include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <U8g2lib.h>
 
-//U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
+U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
 // uncomment for GMG12864-06D ST7565 v2.x display while above line to be commented out
-U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
+//U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
 
 // GMG12864-06D (powered directly from Mega2560 +3.3v as ST7565 is 2.1v controller)
 // below 5 signals resolved by 1k-2k resistor deviders between Mega2560 & GMG12864-06D
@@ -128,7 +128,7 @@ volatile bool inProgress = false;
 void setup(void) {
   Serial.begin(9600);
   u8g2.begin();
-  u8g2.setContrast(20); // uncomment only for GMG12864-06D display
+  //u8g2.setContrast(20); // uncomment only for GMG12864-06D display
   u8g2.enableUTF8Print();
   pinMode(pinLcdBacklight, OUTPUT);
   digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
@@ -162,7 +162,7 @@ void setup(void) {
   itemToSelect = EEPROM.read(eepromAddress);  
   //
   if (itemToSelect > 0) { 
-      Serial.print ("Reading from EEPROM: "); Serial.println(itemToSelect);
+      //Serial.print ("Reading from EEPROM: "); Serial.println(itemToSelect);
       SetSelectedItem(itemToSelect); 
       selectedItem = itemToSelect;
   }
@@ -265,18 +265,32 @@ int CalculatePositionX(char * title) {
 }
 
 //
-void DisplayTreatmentInProgressScreen(String frequency, String frequencySquence) {
+void DisplayTreatInProgressScreen(String frequency, String frequencySquence) {
     // concatenate all details into
     String strStatus = String("Seq:" + frequencySquence + " Freq:" + frequency + "Hz ");
-    int intStrLength = strStatus.length();
+    int intStatusLength = strStatus.length();
     // allocate buffer for converter to char pointer
-    char* status = new char[intStrLength+1]; //char * cstr = new char [str.length()+1];
-    strStatus.toCharArray(status, intStrLength);
+    char* status = new char[intStatusLength+1]; //char * cstr = new char [str.length()+1];
+    strStatus.toCharArray(status, intStatusLength+1);
+    //
+    String strVoltage;
+    float fVoltage = MeasureBatteryVoltage();
+    strVoltage = String(String(fVoltage) + "v");
+    int intVoltageLength = strVoltage.length()+1;
+    // allocate buffer
+    char* batteryVoltage = new char[intVoltageLength]; 
+    strVoltage.toCharArray(batteryVoltage, intVoltageLength);
+    //
+    Serial.println(String("String Voltage: " + strVoltage));
     //  
     u8g2.firstPage();
     do {
-      u8g2.setFont(u8g2_font_6x12_te);                // choosing small fonts
       DrawTitleFrame();
+      u8g2.setDrawColor(2);                            // inverse the color
+      u8g2.setFontMode(1);                             // is transparent
+      u8g2.setFont(u8g2_font_3x5im_tr);                // or u8g2_font_tiny_simon_mr github.com/olikraus/u8g2/wiki/fntgrpbitfontmaker2 and /olikraus/u8g2/wiki/fntlist8#3-pixel-height
+      u8g2.drawStr(105, 8, batteryVoltage);
+      u8g2.setFont(u8g2_font_6x12_te);                // choosing small fonts
       u8g2.drawStr(37, 25, "Therapy");
       u8g2.drawStr(18, 38, "Time:");
       u8g2.drawStr(48, 38, treatmentTime);
@@ -341,10 +355,10 @@ byte CalulatePageOffset(byte currentItem) {
 void HighlightSelectedItem(byte selectItem, byte offset){                        //displays text and cursor
   u8g2.firstPage();
   do {
-     u8g2.drawHLine( 5, 11 + (selectItem-offset)*10, 118);
-     u8g2.drawHLine( 5, 2 + (selectItem-offset)*10, 118);
-     u8g2.drawVLine( 5, 2 + (selectItem-offset)*10, 10);
-     u8g2.drawVLine( 122, 2 + (selectItem-offset)*10, 10);     
+     u8g2.drawHLine(5, 11 + (selectItem-offset)*10, 118);
+     u8g2.drawHLine(5, 2 + (selectItem-offset)*10, 118);
+     u8g2.drawVLine(5, 2 + (selectItem-offset)*10, 10);
+     u8g2.drawVLine(122, 2 + (selectItem-offset)*10, 10);     
      DisplayMainMenu(offset);
   } while ( u8g2.nextPage() );
 }
@@ -361,15 +375,13 @@ void GenerateFrequency(void) {
   intFreqToGenerate = 0;
   strComplete = "";
   
-  //determine number of f in the ilness array
+  //determine number of f in the diagnoze array
   for (int counter=0; counter < 10; counter++) {                    
      freqValue = frequencies[10*(selectedItem-1) + counter];
      if (freqValue > 0) numberOfFreqInSet++;   // increment number of frequencies found in array
   }
   //
   fragmentTime = 10 / numberOfFreqInSet * 60000; // time splitted between existing frequences proportionally in milliseconds 60000ms = 1min
-  //
-  UpdateVoltageOnTreatmentScreen();
   //
   gen.EnableOutput(true);
   digitalWrite (pinLcdBrighnessdCtrl, LOW); // disable LCD high britness
@@ -378,7 +390,7 @@ void GenerateFrequency(void) {
       //
       strFreqToGenerate = String(intFreqToGenerate, DEC);
       strSeqNumber = String(intFreqSeqNumber+1, DEC);
-      DisplayTreatmentInProgressScreen(strFreqToGenerate, strSeqNumber);
+      DisplayTreatInProgressScreen(strFreqToGenerate, strSeqNumber);
       //
       gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);        
       delay(fragmentTime);
@@ -389,24 +401,13 @@ void GenerateFrequency(void) {
   strComplete = "Finished!";
     //
   PlayTone(THREE_BEEPS);
-  DisplayTreatmentInProgressScreen("", "");
-  digitalWrite (pinLcdBrighnessdCtrl, HIGH); // enable LCD high britness
+  DisplayTreatInProgressScreen("", "");
+  digitalWrite (pinLcdBrighnessdCtrl, HIGH); // enable LCD high brightness - used for ST7565 only to reduce consumption. For others can be igored.
   delay(3000); // 3sec
   // go to previously selected page
   SetSelectedItem(selectedItem); 
   //
   strComplete = "";
-}
-
-//
-void UpdateVoltageOnTreatmentScreen() {
-    // display battery voltage 
-    u8g2.firstPage();
-    do {
-      u8g2.setFont(u8g2_font_6x12_te); // set small font
-      u8g2.setCursor(103, 8);  
-      u8g2.print(String(MeasureBatteryVoltage() + "v"));
-    } while (u8g2.nextPage());
 }
 
 // signals between frequency switch and at the end of the session
