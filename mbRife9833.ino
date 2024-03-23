@@ -87,9 +87,10 @@ const int frequencies[numberOfDiagnoses * 10] = {
 #define pinGenCS             9 // CS for AD9833
 #define pinBeepOut           4 // beep at each frequency and 3 beeps at the end
 #define pinLcdBrighnessdCtrl 5 // valika request to reduce current and save battery
+#define pinBatteryLevel     A0 // valika request to measure voltage
 
 AD9833 gen(pinGenCS);  //connect FSYNC/CS to D9 of UNO or Nano
-
+//
 const int SCROLL_DOWN=0;
 const int SCROLL_UP=1;
 const int ONE_BEEP=1;
@@ -97,7 +98,14 @@ const int THREE_BEEPS=3;
 const int PIEZO_BEEP_TONE = 2000; // Adjust to your loudwdest piezo beeper 1000 to 4000hz
 const int PEIZO_BEEP_LENGTH = 1000;
 const int PEIZO_BEEP_PAUSE = 500;
-
+// voltage sensor
+const float R1 = 32000.0; // 30 k
+const float R2 = 8000.0;  // 7.5k
+float referenceVoltage = 5.0; // Float for Reference Voltage
+int voltageAnalogPoints = 0;  // Integer for ADC value
+float relativeVoltage = 0.0;
+float voltageOutput = 0.0;
+//
 byte selectedItem; //currenly selected diagnose
 byte pageOffset;   //offset from the top of the current page
 unsigned long  timeStart, timeEndEnterButton; //, timeEndPressButton, timeEndDownButton;
@@ -114,7 +122,6 @@ volatile bool btnEnterPressed = false;  // Flag from Btn Enter interrupt routine
 // eeprom related
 byte eepromAddress = 0;
 int itemToSelect;
-
 volatile bool inProgress = false;
 
 // runs once
@@ -159,6 +166,9 @@ void setup(void) {
       SetSelectedItem(itemToSelect); 
       selectedItem = itemToSelect;
   }
+
+  //
+  Serial.println("Battery [V]: " + String(MeasureBatteryVoltage()));
 }
 
 // main loop
@@ -182,6 +192,15 @@ void loop() {
         ProcessPressExecute(); 
     }
 }
+
+//
+float MeasureBatteryVoltage() {
+   voltageAnalogPoints = analogRead(pinBatteryLevel);
+   relativeVoltage  = (voltageAnalogPoints * referenceVoltage) / 1023.0; 
+   voltageOutput = relativeVoltage / (R2/(R1+R2)); 
+   return voltageOutput;
+}
+
 
 // sets previously used item after unit turned on 
 void SetSelectedItem(byte itemToSelect) {
@@ -271,7 +290,6 @@ void DisplayTreatmentInProgressScreen(String frequency, String frequencySquence)
     } while ( u8g2.nextPage() );
 }
 
-//
 void ProcessPressExecute() {
   byte pinOutput = HIGH;
   byte pinOutputNext;
@@ -351,6 +369,8 @@ void GenerateFrequency(void) {
   //
   fragmentTime = 10 / numberOfFreqInSet * 60000; // time splitted between existing frequences proportionally in milliseconds 60000ms = 1min
   //
+  UpdateVoltageOnTreatmentScreen();
+  //
   gen.EnableOutput(true);
   digitalWrite (pinLcdBrighnessdCtrl, LOW); // disable LCD high britness
   for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
@@ -370,12 +390,23 @@ void GenerateFrequency(void) {
     //
   PlayTone(THREE_BEEPS);
   DisplayTreatmentInProgressScreen("", "");
-  digitalWrite (pinLcdBrighnessdCtrl,HIGH); // enable LCD high britness
+  digitalWrite (pinLcdBrighnessdCtrl, HIGH); // enable LCD high britness
   delay(3000); // 3sec
   // go to previously selected page
   SetSelectedItem(selectedItem); 
   //
   strComplete = "";
+}
+
+//
+void UpdateVoltageOnTreatmentScreen() {
+    // display battery voltage 
+    u8g2.firstPage();
+    do {
+      u8g2.setFont(u8g2_font_6x12_te); // set small font
+      u8g2.setCursor(103, 8);  
+      u8g2.print(String(MeasureBatteryVoltage() + "v"));
+    } while (u8g2.nextPage());
 }
 
 // signals between frequency switch and at the end of the session
