@@ -1,7 +1,7 @@
 // Arduino Mega2560 & Mega2560-Pro Rife Machine generator 
 // - logically bounce protected encoder
 // - UTF8 cyrillic support
-// - Supports LEDs: 20pins ST7920 12864 &https://github.com/mblanc443/mbRife/blob/main/postflow/mbRife9833.ino
+// - Supports LEDs: 20pins ST7920 12864 &
 //                  13pins GMG12864-06D ST7565 v2.x displays
 #include <EEPROM.h>
 #include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino
