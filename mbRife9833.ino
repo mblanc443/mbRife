@@ -197,7 +197,7 @@ void loop() {
 //
 float MeasureBatteryVoltage() {
    voltageAnalogPoints = analogRead(pinBatteryLevel);
-   relativeVoltage  = (voltageAnalogPoints * referenceVoltage) / 1023.0; 
+   relativeVoltage  = (voltageAnalogPoints * referenceVoltage) / 1024.0; 
    voltageOutput = relativeVoltage / (R2/(R1+R2)); 
    return voltageOutput;
 }
