@@ -1,3 +1,4 @@
+
 // Arduino Mega2560 & Mega2560-Pro Rife Machine generator 
 // - logically bounce protected encoder
 // - UTF8 cyrillic support
@@ -235,11 +236,18 @@ void DisplayIntroScreen(void) {
 
 // list of diagnoses screen displayed after intro
 void DisplayMainMenu(int pgOffset) {
-    // frame
+     // frame
     DrawTitleFrame();
     u8g2.setDrawColor(2);                // inverse the color
     u8g2.setFontMode(1);                 // is transparent
     u8g2.setFont(u8g2_font_3x5im_tr);    // or u8g2_font_tiny_simon_mr github.com/olikraus/u8g2/wiki/fntgrpbitfontmaker2 and /olikraus/u8g2/wiki/fntlist8#3-pixel-height
+    String strVoltage;
+    float fVoltage = MeasureBatteryVoltage();
+    strVoltage = String(String(fVoltage) + "v");
+    int intVoltageLength = strVoltage.length()+1;
+    // allocate buffer
+    char* batteryVoltage = new char[intVoltageLength]; 
+    strVoltage.toCharArray(batteryVoltage, intVoltageLength);
     u8g2.drawStr(128-strVoltage.length()*4, 8, batteryVoltage);    
     // fill in diagnoses list
     for (int counter = pgOffset; counter < 6 + pgOffset; counter++) {
