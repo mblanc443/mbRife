@@ -233,13 +233,13 @@ void DisplayIntroScreen(void) {
    u8g2.drawStr( 30, 62,  "wait...");
 }
 
-//
+// list of diagnoses screen displayed after intro
 void DisplayMainMenu(int pgOffset) {
     // frame
     DrawTitleFrame();
-    u8g2.setDrawColor(2);                            // inverse the color
-    u8g2.setFontMode(1);                             // is transparent
-    u8g2.setFont(u8g2_font_3x5im_tr);                // or u8g2_font_tiny_simon_mr github.com/olikraus/u8g2/wiki/fntgrpbitfontmaker2 and /olikraus/u8g2/wiki/fntlist8#3-pixel-height
+    u8g2.setDrawColor(2);                // inverse the color
+    u8g2.setFontMode(1);                 // is transparent
+    u8g2.setFont(u8g2_font_3x5im_tr);    // or u8g2_font_tiny_simon_mr github.com/olikraus/u8g2/wiki/fntgrpbitfontmaker2 and /olikraus/u8g2/wiki/fntlist8#3-pixel-height
     u8g2.drawStr(128-strVoltage.length()*4, 8, batteryVoltage);    
     // fill in diagnoses list
     for (int counter = pgOffset; counter < 6 + pgOffset; counter++) {
@@ -269,7 +269,7 @@ int CalculatePositionX(char * title) {
     return (2); // TO DO   
 }
 
-//
+// screen displayed during the treatment
 void DisplayTreatInProgressScreen(String frequency, String frequencySquence) {
     // concatenate all details into
     String strStatus = String("Seq:" + frequencySquence + " Freq:" + frequency + "Hz ");
@@ -309,6 +309,7 @@ void DisplayTreatInProgressScreen(String frequency, String frequencySquence) {
     } while ( u8g2.nextPage() );
 }
 
+// encoder button pressed  - invoked by IRQ
 void ProcessPressExecute() {
   byte pinOutput = HIGH;
   byte pinOutputNext;
