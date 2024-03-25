@@ -44,7 +44,7 @@ const char* diagnoses[numberOfDiagnoses] = {
 };
 
 const int frequencies[numberOfDiagnoses * 10] = { 
-  4,0,0,0,0,0,0,0,0,0,                            // "Good Sleep"
+  4,5,6,0,0,0,0,0,0,0,                            //"Good Sleep"
   10000,0,0,0,0,0,0,0,0,0,                        //"Alcoholism"
   787,776,727,690,465,428,660,0,0,0,              //"Angina"
   10000,3000,95,0,0,0,0,0,0,0,                    //"Stomachache"
