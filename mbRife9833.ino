@@ -88,7 +88,7 @@ const int frequencies[numberOfDiagnoses * 10] = {
 #define pinLcdBacklight     13 // on/off lcd backlight
 #define pinGenCS             9 // CS for AD9833
 #define pinBeepOut           4 // beep at each frequency and 3 beeps at the end
-#define pinLcdBrighnessdCtrl 5 // request to reduce current and save battery, normally shortens background 68ohm resistor of ST7565_ERC12864 through any npn transistor and releases during the treatment to save battery life
+#define pinCustomCtrl        5 // request to turn on at any btn press and off after 3 beeps
 #define pinBatteryLevel     A0 // request to measure battery voltage - 40kohm in sum of two resistors devider. Middle connected to pin A0, top to Vcc and bottom to GND
  
 AD9833 gen(pinGenCS);  //connect FSYNC/CS to D9 of UNO or Nano
@@ -134,7 +134,7 @@ void setup(void) {
   u8g2.enableUTF8Print();
   pinMode(pinLcdBacklight, OUTPUT);
   digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
-  digitalWrite (pinLcdBrighnessdCtrl,HIGH);// optional: controls brighness of LCD by removing short from a backlight power resistor (~68ohm) while in session
+  digitalWrite (pinCustomCtrl, LOW);    // optional: controls brighness of LCD by removing short from a backlight power resistor (~68ohm) while in session
   pinMode(pinEncoderCW, INPUT_PULLUP);  // Encoder CW The module already has pullup resistors on board
   pinMode(pinEncoderCCW, INPUT_PULLUP); // Encoder CCW
   pinMode(pinBtnEnter, INPUT_PULLUP);   // Encoder button
@@ -192,6 +192,33 @@ void loop() {
     //
     if (btnEnterPressed) {
         ProcessPressExecute(); 
+    }
+}
+
+// pseudo multitasking
+void yield() {
+  byte pinOutput = HIGH;
+  byte pinOutputNext;
+    
+    //ENTER button - "Therapy" mode
+    pinOutput = digitalRead(pinBtnEnter);            //reading state of button Enter
+    pinOutputNext = digitalRead(pinBtnEnter);
+    if (pinOutput == LOW and pinOutputNext == LOW) {   
+        timeEndEnterButton = micros() - timeStart;
+    } 
+    if (timeEndEnterButton > 20 and pinOutputNext == HIGH) { 
+        //
+        digitalWrite (pinCustomCtrl, HIGH); // Custom request set to high
+        //
+        if (inProgress == true) {
+            inProgress = false;            
+            // display first screen 
+            u8g2.firstPage();
+            do {
+                DisplayMainMenu(pageOffset); 
+               // highlightItem(0,0); 
+            } while ( u8g2.nextPage() );            
+        } 
     }
 }
 
@@ -294,7 +321,7 @@ void DisplayTreatInProgressScreen(String frequency, String frequencySquence) {
     char* batteryVoltage = new char[intVoltageLength]; 
     strVoltage.toCharArray(batteryVoltage, intVoltageLength);
     //
-    Serial.println(String("String Voltage: " + strVoltage));
+    //Serial.println(String("String Voltage: " + strVoltage));
     //  
     u8g2.firstPage();
     do {
@@ -328,15 +355,17 @@ void ProcessPressExecute() {
     if (pinOutput == LOW and pinOutputNext == LOW) {   
         timeEndEnterButton = micros() - timeStart;
     } 
-    if (timeEndEnterButton > 20 and pinOutputNext == HIGH) {
+    if (timeEndEnterButton > 20 and pinOutputNext == HIGH) { 
+        //
+        digitalWrite (pinCustomCtrl, HIGH); // Custom request set to high
         if (inProgress == true) {
-            inProgress = false;            
+            /*inProgress = false;            
             // display first screen 
             u8g2.firstPage();
             do {
                 DisplayMainMenu(pageOffset); 
                // highlightItem(0,0); 
-            } while ( u8g2.nextPage() );            
+            } while ( u8g2.nextPage() ); */           
         } else {
             inProgress = true;
             // save selected itme into EEPROM
@@ -398,7 +427,7 @@ void GenerateFrequency(void) {
   fragmentTime = 10 / numberOfFreqInSet * 60000; // time splitted between existing frequences proportionally in milliseconds 60000ms = 1min
   //
   gen.EnableOutput(true);
-  digitalWrite (pinLcdBrighnessdCtrl, LOW); // disable LCD high britness
+
   for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
       intFreqToGenerate = frequencies[10*(selectedItem-1) + intFreqSeqNumber];
       //
@@ -415,8 +444,9 @@ void GenerateFrequency(void) {
   strComplete = "Finished!";
     //
   PlayTone(THREE_BEEPS);
+  digitalWrite (pinCustomCtrl, LOW); // Custom request reset
   DisplayTreatInProgressScreen("", "");
-  digitalWrite (pinLcdBrighnessdCtrl, HIGH); // enable LCD high brightness - used for ST7565 only to reduce consumption. For others can be igored.
+
   delay(3000); // 3sec
   // go to previously selected page
   SetSelectedItem(selectedItem); 
