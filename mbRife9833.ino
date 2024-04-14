@@ -195,33 +195,6 @@ void loop() {
     }
 }
 
-// pseudo multitasking
-void yield() {
-  byte pinOutput = HIGH;
-  byte pinOutputNext;
-    
-    //ENTER button - "Therapy" mode
-    pinOutput = digitalRead(pinBtnEnter);            //reading state of button Enter
-    pinOutputNext = digitalRead(pinBtnEnter);
-    if (pinOutput == LOW and pinOutputNext == LOW) {   
-        timeEndEnterButton = micros() - timeStart;
-    } 
-    if (timeEndEnterButton > 20 and pinOutputNext == HIGH) { 
-        //
-        digitalWrite (pinCustomCtrl, HIGH); // Custom request set to high
-        //
-        if (inProgress == true) {
-            inProgress = false;            
-            // display first screen 
-            u8g2.firstPage();
-            do {
-                DisplayMainMenu(pageOffset); 
-               // highlightItem(0,0); 
-            } while ( u8g2.nextPage() );            
-        } 
-    }
-}
-
 //
 float MeasureBatteryVoltage() {
    voltageAnalogPoints = analogRead(pinBatteryLevel);
@@ -359,13 +332,13 @@ void ProcessPressExecute() {
         //
         digitalWrite (pinCustomCtrl, HIGH); // Custom request set to high
         if (inProgress == true) {
-            /*inProgress = false;            
+            inProgress = false;            
             // display first screen 
             u8g2.firstPage();
             do {
                 DisplayMainMenu(pageOffset); 
                // highlightItem(0,0); 
-            } while ( u8g2.nextPage() ); */           
+            } while ( u8g2.nextPage() );            
         } else {
             inProgress = true;
             // save selected itme into EEPROM
