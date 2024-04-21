@@ -1,4 +1,3 @@
-
 // Arduino Mega2560 & Mega2560-Pro Rife Machine generator 
 // - logically bounce protected encoder
 // - UTF8 cyrillic support
@@ -88,7 +87,7 @@ const int frequencies[numberOfDiagnoses * 10] = {
 #define pinLcdBacklight     13 // on/off lcd backlight
 #define pinGenCS             9 // CS for AD9833
 #define pinBeepOut           4 // beep at each frequency and 3 beeps at the end
-#define pinCustomCtrl        5 // request to turn on at any btn press and off after 3 beeps
+#define pinCustomCtrl        5 // Custom request
 #define pinBatteryLevel     A0 // request to measure battery voltage - 40kohm in sum of two resistors devider. Middle connected to pin A0, top to Vcc and bottom to GND
  
 AD9833 gen(pinGenCS);  //connect FSYNC/CS to D9 of UNO or Nano
@@ -110,21 +109,24 @@ float voltageOutput = 0.0;
 //
 byte selectedItem; //currenly selected diagnose
 byte pageOffset;   //offset from the top of the current page
-unsigned long  timeStart, timeEndEnterButton; //, timeEndPressButton, timeEndDownButton;
-char* titleLine = "Diagnose:";      //name of the selected sickness
+unsigned long  timeStart, timeEndEnterButton; 
+char* titleLine = "Diagnose:";      //name of the selected diagnosis
 // values to display as strings                        
-char treatmentTime[3] = {"10"};  
+char treatmentTime[3] = {"20"};     // 20 minutes
 char charFreqSequentialNumber[3];   
 char charFrequency[5];
 uint16_t intFreqToGenerate;         
-char* strComplete;                      //the end of the session message
+char* strComplete;                      // the end of the session message
 int rotationCounter=0;                  // encoder turn counter (negative -> CCW)
 volatile bool encoderMoved = false;     // Flag from interrupt routine (moved = true)
 volatile bool btnEnterPressed = false;  // Flag from Btn Enter interrupt routine
 // eeprom related
 byte eepromAddress = 0;
 int itemToSelect;
-volatile bool inProgress = false;
+// Variables to track state and timing
+unsigned long frequencyStartTime = 0;
+bool isGeneratingFrequency = false;
+
 
 // runs once
 void setup(void) {
@@ -134,7 +136,7 @@ void setup(void) {
   u8g2.enableUTF8Print();
   pinMode(pinLcdBacklight, OUTPUT);
   digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
-  digitalWrite (pinCustomCtrl, LOW);    // optional: controls brighness of LCD by removing short from a backlight power resistor (~68ohm) while in session
+  digitalWrite  (pinCustomCtrl, LOW);;  // optional, for future feature 
   pinMode(pinEncoderCW, INPUT_PULLUP);  // Encoder CW The module already has pullup resistors on board
   pinMode(pinEncoderCCW, INPUT_PULLUP); // Encoder CCW
   pinMode(pinBtnEnter, INPUT_PULLUP);   // Encoder button
@@ -158,7 +160,7 @@ void setup(void) {
   //
   attachInterrupt(digitalPinToInterrupt(pinEncoderCW), OnScrollChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnScrollChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(pinBtnEnter), OnEnterBtnChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(pinBtnEnter), OnEnterBtnChange, RISING);
 
   // read EEPROM and update UI if memorized
   itemToSelect = EEPROM.read(eepromAddress);  
@@ -170,7 +172,7 @@ void setup(void) {
   }
 
   //
-  Serial.println("Battery [V]: " + String(MeasureBatteryVoltage()));
+  //Serial.println("Battery [V]: " + String(MeasureBatteryVoltage()));
 }
 
 // main loop
@@ -191,7 +193,7 @@ void loop() {
     }
     //
     if (btnEnterPressed) {
-        ProcessPressExecute(); 
+        ProcessPressEnter();
     }
 }
 
@@ -202,7 +204,6 @@ float MeasureBatteryVoltage() {
    voltageOutput = relativeVoltage / (R2/(R1+R2)); 
    return voltageOutput;
 }
-
 
 // sets previously used item after unit turned on 
 void SetSelectedItem(byte itemToSelect) {
@@ -318,7 +319,7 @@ void DisplayTreatInProgressScreen(String frequency, String frequencySquence) {
 }
 
 // encoder button pressed  - invoked by IRQ
-void ProcessPressExecute() {
+void ProcessPressEnter() {
   byte pinOutput = HIGH;
   byte pinOutputNext;
     
@@ -328,29 +329,100 @@ void ProcessPressExecute() {
     if (pinOutput == LOW and pinOutputNext == LOW) {   
         timeEndEnterButton = micros() - timeStart;
     } 
-    if (timeEndEnterButton > 20 and pinOutputNext == HIGH) { 
-        //
+    if (timeEndEnterButton > 50 and pinOutputNext == HIGH) {
         digitalWrite (pinCustomCtrl, HIGH); // Custom request set to high
-        if (inProgress == true) {
-            inProgress = false;            
-            // display first screen 
-            u8g2.firstPage();
-            do {
-                DisplayMainMenu(pageOffset); 
-               // highlightItem(0,0); 
-            } while ( u8g2.nextPage() );            
-        } else {
-            inProgress = true;
-            // save selected itme into EEPROM
+        //
+        if (!isGeneratingFrequency) { // btn pressed when already in use 
+            // set flags
+            isGeneratingFrequency = true;
+            btnEnterPressed = false;
+            // save selected item into EEPROM
             EEPROM.update(eepromAddress, selectedItem);  
             // display title on top
             titleLine = diagnoses[selectedItem-1];
+            //            
             // prepare and invoke external generator
-            GenerateFrequency();
+            bool isAborted = GenerateFrequency();
+            if (isAborted) {
+                // 
+                SetSelectedItem(selectedItem);
+            }
             timeStart = 0; timeEndEnterButton = 0;
         }
     }
-}
+} 
+
+// actual frequency formed and passed to ext AD9833
+bool GenerateFrequency(void) {
+ int freqValue = 0;
+ float fragmentTime;
+ float numberOfFreqInSet;
+ String strFreqToGenerate;
+ String strSeqNumber;
+
+  numberOfFreqInSet = 0; 
+  intFreqToGenerate = 0;
+  strComplete = "";
+  
+  //determine number of f in the diagnoze array
+  for (int counter=0; counter < 10; counter++) {                    
+     freqValue = frequencies[10*(selectedItem-1) + counter];
+     if (freqValue > 0) numberOfFreqInSet++;   // increment number of frequencies found in array
+  }
+  
+  fragmentTime = atoi (treatmentTime) / numberOfFreqInSet * 60000; // time splitted between frequences equaly in milliseconds 60000ms = 1min
+  //
+  gen.EnableOutput(true);
+
+  for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
+    // responce to button enter pressed anytime
+    unsigned long currentTime = millis();
+    unsigned long elapsedTime = 0;
+
+      frequencyStartTime = millis();    
+      intFreqToGenerate = frequencies[10*(selectedItem-1) + intFreqSeqNumber];
+      //
+      strFreqToGenerate = String(intFreqToGenerate, DEC);
+      strSeqNumber = String(intFreqSeqNumber+1, DEC);
+      DisplayTreatInProgressScreen(strFreqToGenerate, strSeqNumber);
+      //
+      gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate); 
+
+      //Serial.println("GenerateFrequency() - btnEnterPressed:" + String(btnEnterPressed) + " isGeneratingFrequency:" + String(isGeneratingFrequency));
+      // Non-blocking delay loop 
+      while (elapsedTime < fragmentTime && isGeneratingFrequency) {
+         // Check for encoder button press to interrupt
+         if (btnEnterPressed) {
+            // Stop generating frequency
+            isGeneratingFrequency = false; 
+            // disable output and leave 
+            gen.EnableOutput(false); 
+            // abort loop
+            return true; // aborted
+         }
+        // Update elapsed time
+        currentTime = millis();
+        elapsedTime = currentTime - frequencyStartTime;
+     }
+    
+      // beep with one beep after each frequency change
+      PlayTone(ONE_BEEP);
+  }
+  gen.EnableOutput(false); // disable output after each frequency block ends
+  isGeneratingFrequency = false; 
+  //
+  strComplete = "Finished!";
+  //
+  PlayTone(THREE_BEEPS);
+  DisplayTreatInProgressScreen("", "");
+  digitalWrite (pinCustomCtrl, LOW); // Custom request reset
+  delay(3000); // 3sec
+  // go to previously selected page
+  SetSelectedItem(selectedItem); 
+  //
+  strComplete = "";
+  return false; // normal exit
+} 
 
 // for encoder
 void ScrollItem(bool direction) {
@@ -377,54 +449,6 @@ void HighlightSelectedItem(byte selectItem, byte offset){                       
      u8g2.drawVLine(122, 2 + (selectItem-offset)*10, 10);     
      DisplayMainMenu(offset);
   } while ( u8g2.nextPage() );
-}
-
-// actual frequency formed and passed to ext AD9833
-void GenerateFrequency(void) {
- int freqValue = 0;
- float fragmentTime;
- float numberOfFreqInSet;
- String strFreqToGenerate;
- String strSeqNumber;
-
-  numberOfFreqInSet = 0; 
-  intFreqToGenerate = 0;
-  strComplete = "";
-  
-  //determine number of f in the diagnoze array
-  for (int counter=0; counter < 10; counter++) {                    
-     freqValue = frequencies[10*(selectedItem-1) + counter];
-     if (freqValue > 0) numberOfFreqInSet++;   // increment number of frequencies found in array
-  }
-  //
-  fragmentTime = 10 / numberOfFreqInSet * 60000; // time splitted between existing frequences proportionally in milliseconds 60000ms = 1min
-  //
-  gen.EnableOutput(true);
-
-  for (int intFreqSeqNumber=0; intFreqSeqNumber < numberOfFreqInSet; intFreqSeqNumber++) {
-      intFreqToGenerate = frequencies[10*(selectedItem-1) + intFreqSeqNumber];
-      //
-      strFreqToGenerate = String(intFreqToGenerate, DEC);
-      strSeqNumber = String(intFreqSeqNumber+1, DEC);
-      DisplayTreatInProgressScreen(strFreqToGenerate, strSeqNumber);
-      //
-      gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);        
-      delay(fragmentTime);
-      // beep with one beep after each frequency change
-      PlayTone(ONE_BEEP);
-  }
-  gen.EnableOutput(false); // disable output after each frequency block ends
-  strComplete = "Finished!";
-    //
-  PlayTone(THREE_BEEPS);
-  digitalWrite (pinCustomCtrl, LOW); // Custom request reset
-  DisplayTreatInProgressScreen("", "");
-
-  delay(3000); // 3sec
-  // go to previously selected page
-  SetSelectedItem(selectedItem); 
-  //
-  strComplete = "";
 }
 
 // signals between frequency switch and at the end of the session
