@@ -414,12 +414,12 @@ bool GenerateFrequency(void) {
   //
   PlayTone(THREE_BEEPS);
   DisplayTreatInProgressScreen("", "");
-  digitalWrite (pinCustomCtrl, HIGH); // Custom request reset
   delay(3000); // 3sec
   // go to previously selected page
   SetSelectedItem(selectedItem); 
   //
   strComplete = "";
+  digitalWrite (pinCustomCtrl, HIGH); // Custom request set - it will shut off power here if auto power off impllemented
   return false; // normal exit
 } 
 
