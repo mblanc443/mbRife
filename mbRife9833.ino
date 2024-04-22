@@ -330,7 +330,6 @@ void ProcessPressEnter() {
         timeEndEnterButton = micros() - timeStart;
     } 
     if (timeEndEnterButton > 50 and pinOutputNext == HIGH) {
-        digitalWrite (pinCustomCtrl, HIGH); // Custom request set to high
         //
         if (!isGeneratingFrequency) { // btn pressed when already in use 
             // set flags
@@ -415,7 +414,7 @@ bool GenerateFrequency(void) {
   //
   PlayTone(THREE_BEEPS);
   DisplayTreatInProgressScreen("", "");
-  digitalWrite (pinCustomCtrl, LOW); // Custom request reset
+  digitalWrite (pinCustomCtrl, HIGH); // Custom request reset
   delay(3000); // 3sec
   // go to previously selected page
   SetSelectedItem(selectedItem); 
