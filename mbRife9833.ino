@@ -7,6 +7,16 @@
 #include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <U8g2lib.h>
 
+#define DEBUG 0
+
+#if DEBUG == 1
+#define debug(x) Serial.print(x)
+#define debugln(x) Serial.println(x)
+#else
+#define debug(x)
+#define debugln(x)
+#endif
+ 
 U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
 // uncomment for GMG12864-06D ST7565 v2.x display while above line to be commented out
 //U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
@@ -83,13 +93,15 @@ const int frequencies[numberOfDiagnoses * 10] = {
 
 #define pinEncoderCW         2 // encoder 
 #define pinEncoderCCW        3 // encoder
-#define pinBtnEnter         21 // encoder ENTER    
-#define pinLcdBacklight     13 // on/off lcd backlight
-#define pinGenCS             9 // CS for AD9833
 #define pinBeepOut           4 // beep at each frequency and 3 beeps at the end
-#define pinCustomCtrl        5 // Custom request
+//#define pinCustomCtrl        5 // Custom request
+#define pinShutdown          5 // Power Off pin
+#define pinGenCS             9 // CS for AD9833
+#define pinLcdBacklight     13 // on/off lcd backlight
+#define pinBtnEnter         21 // encoder ENTER    
 #define pinBatteryLevel     A0 // request to measure battery voltage - 40kohm in sum of two resistors devider. Middle connected to pin A0, top to Vcc and bottom to GND
- 
+
+
 AD9833 gen(pinGenCS);  //connect FSYNC/CS to D9 of UNO or Nano
 //
 const int SCROLL_DOWN=0;
@@ -120,13 +132,17 @@ char* strComplete;                      // the end of the session message
 int rotationCounter=0;                  // encoder turn counter (negative -> CCW)
 volatile bool encoderMoved = false;     // Flag from interrupt routine (moved = true)
 volatile bool btnEnterPressed = false;  // Flag from Btn Enter interrupt routine
+volatile int  buttonOutput = 0;         // global value set by onButtonChange()
+enum {STATE_NORMAL, STATE_SHORT, STATE_LONG };
+long LONG_DELTA = 1500ul;               // long press threshold
+long DEBOUNCE_DELTA = 30ul;             // debounce threshold
+
 // eeprom related
 byte eepromAddress = 0;
 int itemToSelect;
 // Variables to track state and timing
 unsigned long frequencyStartTime = 0;
 bool isGeneratingFrequency = false;
-
 
 // runs once
 void setup(void) {
@@ -136,10 +152,12 @@ void setup(void) {
   u8g2.enableUTF8Print();
   pinMode(pinLcdBacklight, OUTPUT);
   digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
-  digitalWrite  (pinCustomCtrl, LOW);;  // optional, for future feature 
+  //digitalWrite (pinCustomCtrl, LOW);;   // optional, for future feature 
+  digitalWrite (pinShutdown, HIGH);     // controls Power Off schema   
   pinMode(pinEncoderCW, INPUT_PULLUP);  // Encoder CW The module already has pullup resistors on board
   pinMode(pinEncoderCCW, INPUT_PULLUP); // Encoder CCW
   pinMode(pinBtnEnter, INPUT_PULLUP);   // Encoder button
+
   // set up external generator AD0933
   gen.Begin();  
   gen.EnableOutput(false);
@@ -160,7 +178,7 @@ void setup(void) {
   //
   attachInterrupt(digitalPinToInterrupt(pinEncoderCW), OnScrollChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnScrollChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(pinBtnEnter), OnEnterBtnChange, RISING);
+  attachInterrupt(digitalPinToInterrupt(pinBtnEnter), OnButtonPress, CHANGE);   // logic OnButtonPress works on CHANGE only
 
   // read EEPROM and update UI if memorized
   itemToSelect = EEPROM.read(eepromAddress);  
@@ -190,11 +208,50 @@ void loop() {
             ScrollItem(SCROLL_UP);   // rotate encoder CW
           }
         }
-    }
+   }
+   //
+   if (btnEnterPressed) {
+      switch (buttonOutput) {
+      case STATE_NORMAL: { break; }
+      case STATE_SHORT: { ProcessButtonClick(); buttonOutput = STATE_NORMAL;  debugln("LOOP||Short Pressed"); break; }
+      case STATE_LONG:  { Shutdown();           buttonOutput = STATE_NORMAL;  debugln("LOOP||LONG Pressed");  break; }
+      }
+   }
+}
+
+// processes turns on treatment and escape from treatment at any time w/ repeated click
+void ProcessButtonClick() {
+  bool isAborted = false;  
+    debugln("ProcessButtonClick||isGeneratingFrequency: " + String(isGeneratingFrequency) + " btnEnterPressed: " + String(btnEnterPressed));
     //
-    if (btnEnterPressed) {
-        ProcessPressEnter();
+    if (!isGeneratingFrequency) { // btn pressed when already in use 
+
+        // save selected item into EEPROM
+        EEPROM.update(eepromAddress, selectedItem);  
+        // display title on top
+        titleLine = diagnoses[selectedItem-1];
+        // set flags
+        isGeneratingFrequency = true;
+        btnEnterPressed = false;
+        // invoke external generator 9833
+        isAborted = GenerateFrequency();
+        // aborted returned if pressed again while in treatment
+        if (isAborted) {
+            isGeneratingFrequency = false; // reset generator state
+            btnEnterPressed = false;       // reset button status
+            SetSelectedItem(selectedItem); debugln("ProcessButtonClick||ABORTED");
+        }
     }
+
+}
+
+// optional - external schema to control power OFF by long press
+void Shutdown() {
+   digitalWrite(pinShutdown, LOW);
+   // for case HW not implemented to avoid self-locking and continue
+   isGeneratingFrequency = false;
+   btnEnterPressed = false;
+   debugln("Initiated Shutdown!");
 }
 
 //
@@ -213,11 +270,6 @@ void SetSelectedItem(byte itemToSelect) {
         DisplayMainMenu(pgOffset); 
         HighlightSelectedItem(itemToSelect, pgOffset); 
     } while ( u8g2.nextPage() );
-}
-
-//
-void OnEnterBtnChange() {
-    btnEnterPressed = true;
 }
 
 //
@@ -318,38 +370,6 @@ void DisplayTreatInProgressScreen(String frequency, String frequencySquence) {
     } while ( u8g2.nextPage() );
 }
 
-// encoder button pressed  - invoked by IRQ
-void ProcessPressEnter() {
-  byte pinOutput = HIGH;
-  byte pinOutputNext;
-    
-    //ENTER button - "Therapy" mode
-    pinOutput = digitalRead(pinBtnEnter);            //reading state of button Enter
-    pinOutputNext = digitalRead(pinBtnEnter);
-    if (pinOutput == LOW and pinOutputNext == LOW) {   
-        timeEndEnterButton = micros() - timeStart;
-    } 
-    if (timeEndEnterButton > 50 and pinOutputNext == HIGH) {
-        //
-        if (!isGeneratingFrequency) { // btn pressed when already in use 
-            // set flags
-            isGeneratingFrequency = true;
-            btnEnterPressed = false;
-            // save selected item into EEPROM
-            EEPROM.update(eepromAddress, selectedItem);  
-            // display title on top
-            titleLine = diagnoses[selectedItem-1];
-            //            
-            // prepare and invoke external generator
-            bool isAborted = GenerateFrequency();
-            if (isAborted) {
-                // 
-                SetSelectedItem(selectedItem);
-            }
-            timeStart = 0; timeEndEnterButton = 0;
-        }
-    }
-} 
 
 // actual frequency formed and passed to ext AD9833
 bool GenerateFrequency(void) {
@@ -387,21 +407,19 @@ bool GenerateFrequency(void) {
       //
       gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate); 
 
-      //Serial.println("GenerateFrequency() - btnEnterPressed:" + String(btnEnterPressed) + " isGeneratingFrequency:" + String(isGeneratingFrequency));
+      debugln("GenerateFrequency-btnEnterPressed:" + String(btnEnterPressed) + " isGeneratingFrequency:" + String(isGeneratingFrequency));
+      
       // Non-blocking delay loop 
       while (elapsedTime < fragmentTime && isGeneratingFrequency) {
-         // Check for encoder button press to interrupt
+         // ABORT: Check for encoder button press to interrupt
          if (btnEnterPressed) {
-            // Stop generating frequency
-            isGeneratingFrequency = false; 
-            // disable output and leave 
+            // disable ext gen. output and leave 
             gen.EnableOutput(false); 
             // abort loop
             return true; // aborted
          }
         // Update elapsed time
-        currentTime = millis();
-        elapsedTime = currentTime - frequencyStartTime;
+        elapsedTime =  millis() - frequencyStartTime;
      }
     
       // beep with one beep after each frequency change
@@ -419,7 +437,7 @@ bool GenerateFrequency(void) {
   SetSelectedItem(selectedItem); 
   //
   strComplete = "";
-  digitalWrite (pinCustomCtrl, HIGH); // Custom request set - it will shut off power here if auto power off impllemented
+  //digitalWrite (pinCustomCtrl, HIGH); // Custom request set - it will autoshutoff power here if auto power off impllemented
   return false; // normal exit
 } 
 
@@ -484,79 +502,38 @@ int8_t AnalyzeEncoderChange() {
     return 0;
 }
 
-//attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), checkButton, CHANGE);
-#define HALT while(true);
-#define STATE_NORMAL 0 // no button activity
-#define STATE_SHORT  1
-#define STATE_LONG   2 
-#define BUTTON_PIN   2 
-volatile int  resultButton = 0; // global value set by checkButton()
-
+// Invoked by interrupt and buttonResult as outcome of it
 void OnButtonPress() {
-  const unsigned long LONG_DELTA = 1500ul;          // hold seconds for a long press
-  const unsigned long DEBOUNCE_DELTA = 30ul;        // debounce time
-  static int lastButtonStatus = HIGH;               // HIGH indicates the button is NOT pressed
-  int buttonStatus;                                 // button atate Pressed/LOW; Open/HIGH
-  static unsigned long longTime = 0ul, shortTime = 0ul; // future times to determine is button has been poressed a short or long time
-  boolean Released = true, Transition = false;          // various button states
-  boolean timeoutShort = false, timeoutLong = false;    // flags for the state of the presses
-
-  buttonStatus = digitalRead(BUTTON_PIN);  // read the button state on the pin "BUTTON_PIN"
+  int buttonState;                         // button atate Pressed/LOW; Open/HIGH
+  static int lastButtonStatus = HIGH;      // HIGH indicates the button is NOT pressed
+  static unsigned long longTime = 0ul; 
+  static unsigned long shortTime = 0ul;    // for future - to determine short or long btn press
+  boolean buttonReleased = true;
+  boolean buttonStateChange = false;
+  boolean timeoutShort = false;
+  boolean timeoutLong = false;  
+  //
+  buttonState = digitalRead(pinBtnEnter);  // read the button state on the pin "BUTTON_PIN"
   timeoutShort = (millis() > shortTime);   // calculate the current time states for the button presses
   timeoutLong = (millis() > longTime);
-
-  if (buttonStatus != lastButtonStatus) {               // reset the timeouts if the button state changed
+  // filter out noise
+  if (buttonState != lastButtonStatus) {     // reset the timeouts if the button state changed
       shortTime = millis() + DEBOUNCE_DELTA;
       longTime = millis() + LONG_DELTA;
   }
-
-  Transition = (buttonStatus != lastButtonStatus);      // has the button changed state
-  Released = (Transition && (buttonStatus == HIGH));    // for input pullup circuit
-
-  lastButtonStatus = buttonStatus;                      // save the button status
-
-  if ( !Transition) {                                  //without a transition, there's no change in input
-       // if there has not been a transition, don't change the previous result
-       resultButton =  STATE_NORMAL | resultButton;
-       return;
+  // state analysis
+  buttonStateChange = (buttonState != lastButtonStatus);         // button state changed 
+  buttonReleased = (buttonStateChange && (buttonState == HIGH)); // for input pullup circuit
+  //
+  lastButtonStatus = buttonState;                      // save the button status
+  // no state change - no update the previous state
+  if ( !buttonStateChange) {  
+       buttonOutput =  STATE_NORMAL | buttonOutput;
+       return; 
   }
+  //
+  if (timeoutLong && buttonReleased) {buttonOutput = STATE_LONG | buttonOutput;  btnEnterPressed = true; debugln("OnButtonPress||LONG||btnEnterPressed: " + String(btnEnterPressed));// long timeout has occurred and the button was just released ensure the button result reflects a long press
+  } else if(timeoutShort && buttonReleased) {buttonOutput = STATE_SHORT | buttonOutput; btnEnterPressed = true; debugln("OnButtonPress||SHORT||btnEnterPressed: " + String(btnEnterPressed));// short timeout and button was just released ensure the button result reflects a short press
+  } else { buttonOutput = STATE_NORMAL | buttonOutput;  btnEnterPressed = false; } // no status change 
 
-  if (timeoutLong && Released) {                  // long timeout has occurred and the button was just released
-       resultButton = STATE_LONG | resultButton;  // ensure the button result reflects a long press
-  } else if (timeoutShort && Released) {          // short timeout has occurred (and not long timeout) and button was just released
-      resultButton = STATE_SHORT | resultButton;  // ensure the button result reflects a short press
-  } else {                                        // else there is no change in status, return the normal state
-      resultButton = STATE_NORMAL | resultButton; // with no change in status, ensure no change in button status
-  }
 }
-
-
-/*
-void loop() {
-  int longButton=0;
-  int count=0;
- 
-    while (true) {
-        switch (resultButton) 
-        case STATE_NORMAL: {
-            //  Serial.print("."); count++; count = count % 10; if (count==0) Serial.println("");
-            break;
-        }
-        case STATE_SHORT: {
-            Serial.println("Short press has been detected");
-            resultButton=STATE_NORMAL;
-            break;
-        }
-        case STATE_LONG: {
-            Serial.println("Button was pressed for long time");
-            longButton++;
-            resultButton=STATE_NORMAL;
-            break;
-        }
-    }
-    if (longButton==5) {
-        Serial.println("Halting");
-        HALT;
-    }
-}
-*/
