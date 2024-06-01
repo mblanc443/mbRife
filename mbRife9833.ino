@@ -94,8 +94,8 @@ const int frequencies[numberOfDiagnoses * 10] = {
 #define pinEncoderCW         2 // encoder 
 #define pinEncoderCCW        3 // encoder
 #define pinBeepOut           4 // beep at each frequency and 3 beeps at the end
-//#define pinCustomCtrl        5 // Custom request
-#define pinShutdown          5 // Power Off pin
+#define pinShutdown2        40 // Custom request
+#define pinShutdown         41 // Power Off pin
 #define pinGenCS             9 // CS for AD9833
 #define pinLcdBacklight     13 // on/off lcd backlight
 #define pinBtnEnter         21 // encoder ENTER    
@@ -152,8 +152,8 @@ void setup(void) {
   u8g2.enableUTF8Print();
   pinMode(pinLcdBacklight, OUTPUT);
   digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
-  //digitalWrite (pinCustomCtrl, LOW);;   // optional, for future feature 
-  digitalWrite (pinShutdown, HIGH);     // controls Power Off schema   
+  digitalWrite (pinShutdown1, HIGH);    // controls Power Off schema  
+  digitalWrite (pinShutdown2, LOW);;    // optional, controls Power Off schema  
   pinMode(pinEncoderCW, INPUT_PULLUP);  // Encoder CW The module already has pullup resistors on board
   pinMode(pinEncoderCCW, INPUT_PULLUP); // Encoder CCW
   pinMode(pinBtnEnter, INPUT_PULLUP);   // Encoder button
@@ -184,13 +184,13 @@ void setup(void) {
   itemToSelect = EEPROM.read(eepromAddress);  
   //
   if (itemToSelect > 0) { 
-      //Serial.print ("Reading from EEPROM: "); Serial.println(itemToSelect);
+      debugln ("Reading from EEPROM: " + String(itemToSelect));
       SetSelectedItem(itemToSelect); 
       selectedItem = itemToSelect;
   }
 
   //
-  //Serial.println("Battery [V]: " + String(MeasureBatteryVoltage()));
+  debugln("Battery [V]: " + String(MeasureBatteryVoltage()));
 }
 
 // main loop
@@ -248,6 +248,7 @@ void ProcessButtonClick() {
 // optional - external schema to control power OFF by long press
 void Shutdown() {
    digitalWrite(pinShutdown, LOW);
+   digitalWrite(pinShutdown2, HIGH);
    // for case HW not implemented to avoid self-locking and continue
    isGeneratingFrequency = false;
    btnEnterPressed = false;
@@ -347,7 +348,7 @@ void DisplayTreatInProgressScreen(String frequency, String frequencySquence) {
     char* batteryVoltage = new char[intVoltageLength]; 
     strVoltage.toCharArray(batteryVoltage, intVoltageLength);
     //
-    //Serial.println(String("String Voltage: " + strVoltage));
+    debugln(String("String Voltage: " + strVoltage));
     //  
     u8g2.firstPage();
     do {
@@ -437,7 +438,9 @@ bool GenerateFrequency(void) {
   SetSelectedItem(selectedItem); 
   //
   strComplete = "";
-  //digitalWrite (pinCustomCtrl, HIGH); // Custom request set - it will autoshutoff power here if auto power off impllemented
+  digitalWrite (pinShutdown, LOW); 
+  digitalWrite (pinShutdown2, HIGH); 
+  //
   return false; // normal exit
 } 
 
