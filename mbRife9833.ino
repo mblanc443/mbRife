@@ -151,6 +151,8 @@ void setup(void) {
   //u8g2.setContrast(20); // uncomment only for GMG12864-06D display
   u8g2.enableUTF8Print();
   pinMode(pinLcdBacklight, OUTPUT);
+  pinMode(pinShutdown1, OUTPUT);
+  pinMode(pinShutdown2, OUTPUT);
   digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
   digitalWrite (pinShutdown1, HIGH);    // controls Power Off schema  
   digitalWrite (pinShutdown2, LOW);;    // optional, controls Power Off schema  
