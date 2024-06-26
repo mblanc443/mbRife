@@ -155,7 +155,7 @@ void setup(void) {
   pinMode(pinShutdown2, OUTPUT);
   digitalWrite (pinLcdBacklight, LOW);  // turning ON the LCD backlight
   digitalWrite (pinShutdown1, HIGH);    // controls Power Off schema  
-  digitalWrite (pinShutdown2, LOW);;    // optional, controls Power Off schema  
+  digitalWrite (pinShutdown2, LOW);     // optional, controls Power Off schema  
   pinMode(pinEncoderCW, INPUT_PULLUP);  // Encoder CW The module already has pullup resistors on board
   pinMode(pinEncoderCCW, INPUT_PULLUP); // Encoder CCW
   pinMode(pinBtnEnter, INPUT_PULLUP);   // Encoder button
