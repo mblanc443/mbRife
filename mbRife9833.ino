@@ -95,7 +95,7 @@ const int frequencies[numberOfDiagnoses * 10] = {
 #define pinEncoderCCW        3 // encoder
 #define pinBeepOut           4 // beep at each frequency and 3 beeps at the end
 #define pinShutdown2        40 // Custom request
-#define pinShutdown         41 // Power Off pin
+#define pinShutdown1        41 // Power Off pin
 #define pinGenCS             9 // CS for AD9833
 #define pinLcdBacklight     13 // on/off lcd backlight
 #define pinBtnEnter         21 // encoder ENTER    
@@ -249,7 +249,7 @@ void ProcessButtonClick() {
 
 // optional - external schema to control power OFF by long press
 void Shutdown() {
-   digitalWrite(pinShutdown, LOW);
+   digitalWrite(pinShutdown1, LOW);
    digitalWrite(pinShutdown2, HIGH);
    // for case HW not implemented to avoid self-locking and continue
    isGeneratingFrequency = false;
@@ -440,7 +440,7 @@ bool GenerateFrequency(void) {
   SetSelectedItem(selectedItem); 
   //
   strComplete = "";
-  digitalWrite (pinShutdown, LOW); 
+  digitalWrite (pinShutdown1, LOW); 
   digitalWrite (pinShutdown2, HIGH); 
   //
   return false; // normal exit
