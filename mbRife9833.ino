@@ -7,7 +7,7 @@
 #include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <U8g2lib.h>
 
-#define DEBUG 0
+#define DEBUG 0    // ON/OFF switch
 
 #if DEBUG == 1
 #define debug(x) Serial.print(x)
@@ -17,9 +17,9 @@
 #define debugln(x)
 #endif
  
-U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
+//U8G2_ST7920_128X64_1_SW_SPI u8g2(U8G2_R0, /* clock=*/ 13, /* data=*/ 11, /* CS=*/ 10, /* reset=*/ 8);
 // uncomment for GMG12864-06D ST7565 v2.x display while above line to be commented out
-//U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
+U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*CS*/ 10, /*dc*/ 7, /*reset*/ 8); 
 
 // GMG12864-06D (powered directly from Mega2560 +3.3v as ST7565 is 2.1v controller)
 // below 5 signals resolved by 1k-2k resistor deviders between Mega2560 & GMG12864-06D
@@ -148,7 +148,7 @@ bool isGeneratingFrequency = false;
 void setup(void) {
   Serial.begin(9600);
   u8g2.begin();
-  //u8g2.setContrast(20); // uncomment only for GMG12864-06D display
+  u8g2.setContrast(20); // uncomment only for GMG12864-06D display
   u8g2.enableUTF8Print();
   pinMode(pinLcdBacklight, OUTPUT);
   pinMode(pinShutdown1, OUTPUT);
