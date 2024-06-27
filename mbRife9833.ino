@@ -29,7 +29,7 @@ U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*C
 //         pin# [7]  ->              RS  pin# [3] 
 //         pin# [8]  ->              RSE pin# [2]
 
-#define numberOfDiagnoses 35 //the number of diagnoses in the indexOfIllness[] array  //const int
+int numberOfDiagnoses = 0; //35 //the number of diagnoses in the indexOfIllness[] array  //const int
 // english
 /*
 const char* diagnoses[numberOfDiagnoses] = {
@@ -43,7 +43,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   };
   */
 // uncomment for russian list while disable english above
-const char* diagnoses[numberOfDiagnoses] = {
+const char* diagnoses[] = {
   "Хороший сон","Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
   "Инфекция","Острая боль","Боль в спине","Артралгия","Зубная боль",
   "Нет аппетита","Нет вкуса","Морская болезнь","Охриплость","Язва желудка",
@@ -53,7 +53,7 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Головокружение" ,"Вознесение 1","Вознесение 2", "H.Clark Zapper"
 };
 
-const int frequencies[numberOfDiagnoses * 10] = { 
+const int frequencies[] = { 
   6,5,4,0,0,0,0,0,0,0,                            //"Good Sleep"
   10000,0,0,0,0,0,0,0,0,0,                        //"Alcoholism"
   787,776,727,690,465,428,660,0,0,0,              //"Angina"
@@ -90,6 +90,9 @@ const int frequencies[numberOfDiagnoses * 10] = {
   963,852,741,639,528,528,417,396,285,174,        //"Accending 2"
   32000,0,0,0,0,0,0,0,0,0                         //"Hulda Clark Zapper"
 };
+
+// caclulate number of elements of the pointer array
+int numberOfDiagnoses = sizeof(diagnoses) / sizeof(diagnoses[0]);
 
 #define pinEncoderCW         2 // encoder 
 #define pinEncoderCCW        3 // encoder
