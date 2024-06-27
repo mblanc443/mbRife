@@ -54,7 +54,7 @@ const char* diagnoses[numberOfDiagnoses] = {
 };
 
 const int frequencies[numberOfDiagnoses * 10] = { 
-  4,5,6,0,0,0,0,0,0,0,                            //"Good Sleep"
+  6,5,4,0,0,0,0,0,0,0,                            //"Good Sleep"
   10000,0,0,0,0,0,0,0,0,0,                        //"Alcoholism"
   787,776,727,690,465,428,660,0,0,0,              //"Angina"
   10000,3000,95,0,0,0,0,0,0,0,                    //"Stomachache"
@@ -86,8 +86,8 @@ const int frequencies[numberOfDiagnoses * 10] = {
   10000,880,802,787,727,700,650,600,210,125,      //"Epilepsy"
   3176,1550,880,832,802,787,776,727,444,422,      //"Constipation"
   1550,880,802,784,787,786,766,522,727,72,        //"Dizziness"
-  432,528,0,0,0,0,0,0,0,0,                        //"Accending 1"
-  174,285,396,417,639,741,852,963,528,528,        //"Accending 2"
+  528,432,0,0,0,0,0,0,0,0,                        //"Accending 1"
+  963,852,741,639,528,528,417,396,285,174,        //"Accending 2"
   32000,0,0,0,0,0,0,0,0,0                         //"Halda Clark Zapper"
 };
 
