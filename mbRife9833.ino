@@ -1,5 +1,7 @@
 // Arduino Mega2560 & Mega2560-Pro Rife Machine generator 
 // - logically bounce protected encoder
+// - all controls by single encoder: Turn Power Off, Turn Power OFF - long click
+// - auto shutoff after session is over - if electrically connected according to electrical schema proviced, otherwise external power switch to be used
 // - UTF8 cyrillic support
 // - Supports LCDs: 20pins ST7920 12864 &
 //                  13pins GMG12864-06D ST7565 v2.x displays
