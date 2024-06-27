@@ -88,14 +88,14 @@ const int frequencies[numberOfDiagnoses * 10] = {
   1550,880,802,784,787,786,766,522,727,72,        //"Dizziness"
   528,432,0,0,0,0,0,0,0,0,                        //"Accending 1"
   963,852,741,639,528,528,417,396,285,174,        //"Accending 2"
-  32000,0,0,0,0,0,0,0,0,0                         //"Halda Clark Zapper"
+  32000,0,0,0,0,0,0,0,0,0                         //"Hulda Clark Zapper"
 };
 
 #define pinEncoderCW         2 // encoder 
 #define pinEncoderCCW        3 // encoder
 #define pinBeepOut           4 // beep at each frequency and 3 beeps at the end
-#define pinShutdown2        40 // Custom request
-#define pinShutdown1        41 // Power Off pin
+#define pinShutdown2         5 // Optional: Power Off pin
+#define pinShutdown1         6 // Optional: Power Off pin
 #define pinGenCS             9 // CS for AD9833
 #define pinLcdBacklight     13 // on/off lcd backlight
 #define pinBtnEnter         21 // encoder ENTER    
