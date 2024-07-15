@@ -90,7 +90,7 @@ const int frequencies[] = {
   1550,880,802,784,787,786,766,522,727,72,        //"Dizziness"
   528,432,0,0,0,0,0,0,0,0,                        //"Accending 1"
   963,852,741,639,528,528,417,396,285,174,        //"Accending 2"
-  32000,0,0,0,0,0,0,0,0,0                         //"Hulda Clark Zapper"
+  32000,1150,0,0,0,0,0,0,0,0                         //"Hulda Clark Zapper"
 };
 
 // caclulate number of elements of the pointer array
