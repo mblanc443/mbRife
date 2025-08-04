@@ -33,7 +33,6 @@ U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*C
 
 int numberOfDiagnoses = 0; //35 //the number of diagnoses in the indexOfIllness[] array  //const int
 // english
-/*
 const char* diagnoses[numberOfDiagnoses] = {
   "Good Sleep","Alcoholism","Angina","Stomachache","General Pain","Headaches",
   "Infection","Acute pain","Back pain","Arthralgia","Toothache",
@@ -42,9 +41,9 @@ const char* diagnoses[numberOfDiagnoses] = {
   "Cough","Runny nose","Hair loss","Hypertension","Low pressure", 
   "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
   "Dizziness","Accending 1","Accending 2", "H.Clark Zapper"
-  };
-  */
-// uncomment for russian list while disable english above
+};
+/*
+// uncomment for cyrillic list while commenting out english above
 const char* diagnoses[] = {
   "Хороший сон","Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
   "Инфекция","Острая боль","Боль в спине","Артралгия","Зубная боль",
@@ -54,6 +53,7 @@ const char* diagnoses[] = {
   "Недуги Щитовидной","Запах изо рта","Герпес","Эпилепсия","Запоры",
   "Головокружение" ,"Вознесение 1","Вознесение 2", "H.Clark Zapper"
 };
+*/
 
 const int frequencies[] = { 
   6,5,4,0,0,0,0,0,0,0,                            //"Good Sleep"
@@ -90,7 +90,7 @@ const int frequencies[] = {
   1550,880,802,784,787,786,766,522,727,72,        //"Dizziness"
   528,432,0,0,0,0,0,0,0,0,                        //"Accending 1"
   963,852,741,639,528,528,417,396,285,174,        //"Accending 2"
-  32000,1150,0,0,0,0,0,0,0,0                         //"Hulda Clark Zapper"
+  32000,1150,0,0,0,0,0,0,0,0                      //"Hulda Clark Zapper"
 };
 
 // caclulate number of elements of the pointer array
