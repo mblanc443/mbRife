@@ -93,7 +93,7 @@ const int frequencies[] = {
   32000,1150,0,0,0,0,0,0,0,0                      //"Hulda Clark Zapper"
 };
 
-// caclulate number of elements of the pointer array
+// calculate number of elements of the pointer array
 int numberOfDiagnoses = sizeof(diagnoses) / sizeof(diagnoses[0]);
 
 #define pinEncoderCW         2 // encoder 
