@@ -6,7 +6,7 @@
 // - Supports LCDs: 20pins ST7920 12864 &
 //                  13pins GMG12864-06D ST7565 v2.x displays
 #include <EEPROM.h>
-#include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino
+#include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino - install manually
 #include <U8g2lib.h>
 
 #define DEBUG 0    // ON/OFF switch
@@ -31,7 +31,6 @@ U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*C
 //         pin# [7]  ->              RS  pin# [3] 
 //         pin# [8]  ->              RSE pin# [2]
 
-int numberOfDiagnoses = 0; //35 //the number of diagnoses in the indexOfIllness[] array  //const int
 // english
 const char* diagnoses[numberOfDiagnoses] = {
   "Good Sleep","Alcoholism","Angina","Stomachache","General Pain","Headaches",
