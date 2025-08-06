@@ -32,7 +32,7 @@ U8G2_ST7565_ERC12864_F_4W_SW_SPI u8g2 (U8G2_R0, /* clock*/ 13, /* data*/ 11, /*C
 //         pin# [8]  ->              RSE pin# [2]
 
 // english
-const char* diagnoses[numberOfDiagnoses] = {
+const char* diagnoses[] = {
   "Good Sleep","Alcoholism","Angina","Stomachache","General Pain","Headaches",
   "Infection","Acute pain","Back pain","Arthralgia","Toothache",
   "No appetite","No taste","Motion sickness", "Hoarseness","Gastric Ulcer",
