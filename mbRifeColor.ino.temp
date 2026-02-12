@@ -399,33 +399,90 @@ tft.SetFont();
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
+#include <U8g2_for_Adafruit_GFX.h>
 
 #define TFT_CS   53
 #define TFT_DC   49
 #define TFT_RST  48   // CHANGE if different - very important!
 
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+U8G2_FOR_ADAFRUIT_GFX u8g2;
+
+const int FRAME_X = 20;
+const int FRAME_Y = 20;
+const int FRAME_W = 200;
+const int FRAME_H = 280;
+
+// Gold color palette
+#define GOLD1  tft.color565(255, 215, 0)
+#define GOLD2  tft.color565(218, 165, 32)
+#define GOLD3  tft.color565(184, 134, 11)
+#define GOLD4  tft.color565(255, 236, 139)
+#define GOLD5  tft.color565(255, 248, 220)
+
+void DrawFrame() {
+  // Outer thick gold border
+  tft.fillRoundRect(FRAME_X, FRAME_Y, FRAME_W, FRAME_H, 18, GOLD1);
+  // Inner shadow
+  tft.drawRoundRect(FRAME_X+4, FRAME_Y+4, FRAME_W-8, FRAME_H-8, 14, GOLD3);
+  // Inner highlight
+  tft.drawRoundRect(FRAME_X+8, FRAME_Y+8, FRAME_W-16, FRAME_H-16, 10, GOLD4);
+  // Ornamental corners (simple curls)
+  for (int i = 0; i < 16; i++) {
+    tft.drawPixel(FRAME_X+8+i, FRAME_Y+8+sin(i*0.4)*6, GOLD2);
+    tft.drawPixel(FRAME_X+FRAME_W-8-i, FRAME_Y+8+sin(i*0.4)*6, GOLD2);
+    tft.drawPixel(FRAME_X+8+i, FRAME_Y+FRAME_H-8-sin(i*0.4)*6, GOLD2);
+    tft.drawPixel(FRAME_X+FRAME_W-8-i, FRAME_Y+FRAME_H-8-sin(i*0.4)*6, GOLD2);
+  }
+  // Inner background
+  tft.fillRoundRect(FRAME_X+14, FRAME_Y+14, FRAME_W-28, FRAME_H-28, 6, ILI9341_BLACK);
+}
 
 void setup() {
-  Serial.begin(115200);
-  delay(200);
-
-  pinMode(TFT_RST, OUTPUT);
-  digitalWrite(TFT_RST, HIGH);
-  delay(20);
-  digitalWrite(TFT_RST, LOW);
-  delay(20);
-  digitalWrite(TFT_RST, HIGH);
-  delay(150);
-
   tft.begin();
-  tft.setRotation(1);           // try 0,1,2,3
-  tft.fillScreen(ILI9341_BLACK);
-  tft.setCursor(20, 100);
-  tft.setTextColor(ILI9341_WHITE);
-  tft.setTextSize(3);
-  tft.println("Hello Mike!");
-  tft.println("Test OK?");
+  tft.setRotation(1);
+  tft.fillScreen(ILI9341_DARKGREY);
+
+  DrawFrame();
+
+  u8g2.begin(tft);
+
+  // Text to display
+  const char* text = "Привет, мир!";
+
+  // Y positions for each line
+  int y0 = FRAME_Y + 60;
+  int yStep = 38;
+
+  // 1st line: Large, bold, white
+  u8g2.setFont(u8g2_font_ncenB18_cyrillic);
+  u8g2.setForegroundColor(ILI9341_WHITE);
+  u8g2.setCursor(FRAME_X + 30, y0);
+  u8g2.print(text);
+
+  // 2nd line: Medium, gold
+  u8g2.setFont(u8g2_font_helvB14_cyrillic);
+  u8g2.setForegroundColor(GOLD2);
+  u8g2.setCursor(FRAME_X + 30, y0 + yStep);
+  u8g2.print(text);
+
+  // 3rd line: Small, blue
+  u8g2.setFont(u8g2_font_6x13_cyrillic);
+  u8g2.setForegroundColor(ILI9341_CYAN);
+  u8g2.setCursor(FRAME_X + 30, y0 + 2*yStep);
+  u8g2.print(text);
+
+  // 4th line: Script, magenta
+  u8g2.setFont(u8g2_font_lubBI14_cyrillic);
+  u8g2.setForegroundColor(ILI9341_MAGENTA);
+  u8g2.setCursor(FRAME_X + 30, y0 + 3*yStep);
+  u8g2.print(text);
+
+  // 5th line: Small, green
+  u8g2.setFont(u8g2_font_7x14B_cyrillic);
+  u8g2.setForegroundColor(ILI9341_GREENYELLOW);
+  u8g2.setCursor(FRAME_X + 30, y0 + 4*yStep);
+  u8g2.print(text);
 }
 
 void loop() {}
