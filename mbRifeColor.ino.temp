@@ -395,3 +395,37 @@ tft.flush();
 tft.drawRoundRect(cx-i2, cy-i2, i, i, i/8, tft.color565(i, 0, 0));
 tft.SetFont();
 */
+
+#include <SPI.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
+
+#define TFT_CS   53
+#define TFT_DC   49
+#define TFT_RST  48   // CHANGE if different - very important!
+
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+
+  pinMode(TFT_RST, OUTPUT);
+  digitalWrite(TFT_RST, HIGH);
+  delay(20);
+  digitalWrite(TFT_RST, LOW);
+  delay(20);
+  digitalWrite(TFT_RST, HIGH);
+  delay(150);
+
+  tft.begin();
+  tft.setRotation(1);           // try 0,1,2,3
+  tft.fillScreen(ILI9341_BLACK);
+  tft.setCursor(20, 100);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setTextSize(3);
+  tft.println("Hello Mike!");
+  tft.println("Test OK?");
+}
+
+void loop() {}
