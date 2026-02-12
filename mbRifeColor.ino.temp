@@ -1,5 +1,21 @@
- // Arduino  Mega Rife Machine
+/* Some fonts U8g2_for_Adafruit_GFX:
+u8g2_font_6x13_cyrillic
+u8g2_font_7x14_cyrillic
+u8g2_font_9x18_cyrillic
+u8g2_font_10x20_cyrillic
+u8g2_font_helvB08_cyrillic
+u8g2_font_helvB10_cyrillic
+u8g2_font_helvB12_cyrillic
+u8g2_font_helvB14_cyrillic
+u8g2_font_helvB18_cyrillic
+u8g2_font_helvB24_cyrillic
+u8g2_font_lubB08_cyrillic
+u8g2_font_lubB12_cyrillic
+u8g2_font_lubB14_cyrillic
+u8g2_font_lubB18_cyrillic
+u8g2_font_lubB24_cyrillic */
 
+// Arduino  Mega Rife Machine
 #include "SPI.h"
 #include "Adafruit_GFX.h"
 #include "Adafruit_ILI9341.h"
