@@ -1,15 +1,11 @@
-// Arduino Mega2560 & Mega2560-Pro Rife Machine generator
-// Updated for 2.8" 240×320 ILI9341 color TFT (SPI) + touch (touch not used yet)
-// - logically bounce-protected encoder
-// - battery level meter in top right
-// - controls by single encoder: short click = select/start, long click = shutdown
-// - last used item remembered in EEPROM
-// - UTF8 cyrillic support
-// - ILI9341 full buffer mode (fast & flicker-free)
+// Arduino Mega2560 Rife Machine - Updated for 2.8" 240x320 ILI9341 TFT (SPI)
+// Uses Adafruit_ILI9341 + U8g2_for_Adafruit_GFX for font/UTF8 support
 
 #include <EEPROM.h>
-#include <AD9833.h>   // https://github.com/Billwilliams1952/AD9833-Library-Arduino
-#include <U8g2lib.h>
+#include <AD9833.h>           // https://github.com/Billwilliams1952/AD9833-Library-Arduino
+#include <Adafruit_GFX.h>     // Core graphics
+#include <Adafruit_ILI9341.h> // ILI9341 driver
+#include <U8g2_for_Adafruit_GFX.h> // U8g2 adapter for TFT
 #include <SPI.h>
 
 #define DEBUG 0
@@ -20,25 +16,16 @@
   #define debug(x)
   #define debugln(x)
 #endif
-          
-// ────────ILI9341 240×320  constructor──────
-// Most common wiring on Mega (hardware SPI):
-//   SCK  → pin 52
-//   MOSI → pin 51
-//   CS   → pin 53   (or any free pin)
-//   DC   → pin 49   (or any free pin)
-//   RST  → pin 48   (or -1 = no reset pin, use software reset)
-//   LED  → 5V or PWM pin (backlight)
 
+// ILI9341 Pins (Hardware SPI on Mega: SCK=52, MOSI=51)
 #define TFT_CS   53
 #define TFT_DC   49
-#define TFT_RST  48     // can be -1 if display has own reset circuit
-//
-U8G2_ILI9341_240X320_F_4W_HW_SPI u8g2(U8G2_R1, /* cs=*/ TFT_CS, /* dc=*/ TFT_DC, /* reset=*/ TFT_RST);
+#define TFT_RST  48  // Or -1 if not used
 
-// ───────────────────────────────────────────────
-// English list (uncomment cyrillic block below if needed)
-// ───────────────────────────────────────────────
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+U8G2_FOR_ADAFRUIT_GFX u8g2;  // U8g2 overlay for fonts
+
+// English diagnoses (uncomment Cyrillic if needed)
 const char* diagnoses[] = {
   "Good Sleep","Alcoholism","Angina","Stomachache","General Pain","Headaches",
   "Infection","Acute pain","Back pain","Arthralgia","Toothache",
@@ -48,18 +35,6 @@ const char* diagnoses[] = {
   "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
   "Dizziness","Ascension 1","Ascension 2", "H.Clark Zapper"
 };
-/*
-// Cyrillic version
-const char* diagnoses[] = {
-  "Хороший сон","Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
-  "Инфекция","Острая боль","Боль в спине","Артралгия","Зубная боль",
-  "Нет аппетита","Нет вкуса","Морская болезнь","Охриплость","Язва желудка",
-  "Недуги простаты", "Глухота","Грипп","Геморой","Камни в почках",
-  "Кашель","Насморк","Потеря волос","Высокое давление","Низкое давление",
-  "Недуги Щитовидной","Запах изо рта","Герпес","Эпилепсия","Запоры",
-  "Головокружение" ,"Вознесение 1","Вознесение 2", "H.Clark Zapper"
-};
-*/
 
 const int frequencies[] = {
   6,5,4,0,0,0,0,0,0,0,
@@ -101,17 +76,15 @@ const int frequencies[] = {
 
 int numberOfDiagnoses = sizeof(diagnoses) / sizeof(diagnoses[0]);
 
-// ───────────────────────────────────────────────
-// Pins
-// ───────────────────────────────────────────────
+// Pins (same as before)
 #define pinEncoderCW      2
 #define pinEncoderCCW     3
 #define pinBeepOut        4
 #define pinShutdown2      5
 #define pinShutdown1      6
 #define pinGenCS          9
-#define pinLcdBacklight  13   // PWM possible
-#define pinBtnEnter      21   // better on interrupt-capable pin
+#define pinLcdBacklight  13   // Optional PWM for brightness
+#define pinBtnEnter      21
 #define pinBatteryLevel  A0
 
 AD9833 gen(pinGenCS);
@@ -125,14 +98,14 @@ const int PIEZO_BEEP_TONE   = 2200;
 const int PEIZO_BEEP_LENGTH = 80;
 const int PEIZO_BEEP_PAUSE  = 40;
 
-// Voltage divider example: adjust R1/R2 to your resistors!
+// Voltage divider
 const float R1 = 32000.0;
 const float R2 = 8000.0;
 float referenceVoltage = 5.0;
 
 byte   selectedItem    = 1;
 byte   pageOffset      = 0;
-char   treatmentTime[4] = "20";     // max 3 chars + \0
+char   treatmentTime[4] = "20";
 char*  strComplete     = (char*)"";
 bool   isGeneratingFrequency = false;
 volatile bool encoderMoved   = false;
@@ -140,23 +113,25 @@ volatile bool btnEnterPressed = false;
 volatile int  buttonOutput    = 0;
 
 enum { STATE_NORMAL, STATE_SHORT, STATE_LONG };
-long LONG_DELTA    = 1200ul;
+long LONG_DELTA     = 1200ul;
 long DEBOUNCE_DELTA = 25ul;
 
 byte eepromAddress = 0;
 
-// SETUP
+// Setup
 void setup(void) {
   Serial.begin(115200);
-  while (!Serial);
 
-  u8g2.begin();
-  // u8g2.setContrast(180);   // usually not needed for ILI9341
-  u8g2.enableUTF8Print();
-  u8g2.setFontPosTop();
+  tft.begin();
+  tft.setRotation(1);  // Landscape (adjust 0-3 as needed for your display)
+  tft.fillScreen(ILI9341_BLACK);
+  u8g2.begin(tft);     // Link U8g2 to TFT
+  u8g2.setFontMode(1); // Transparent
+  u8g2.setForegroundColor(ILI9341_WHITE);
+  u8g2.setBackgroundColor(ILI9341_BLACK);
 
   pinMode(pinLcdBacklight, OUTPUT);
-  digitalWrite(pinLcdBacklight, HIGH);   // backlight ON
+  analogWrite(pinLcdBacklight, 255);  // Full brightness
 
   pinMode(pinShutdown1, OUTPUT);
   pinMode(pinShutdown2, OUTPUT);
@@ -170,15 +145,11 @@ void setup(void) {
   gen.Begin();
   gen.EnableOutput(false);
 
-  // Intro
-  u8g2.firstPage();
-  do {
-    DisplayIntroScreen();
-  } while (u8g2.nextPage());
-
+  // Intro screen
+  DisplayIntroScreen();
   delay(1800);
 
-  // Read last selection
+  // Read EEPROM
   byte last = EEPROM.read(eepromAddress);
   if (last > 0 && last <= numberOfDiagnoses) {
     selectedItem = last;
@@ -186,6 +157,7 @@ void setup(void) {
   }
 
   RedrawMainMenu();
+
   attachInterrupt(digitalPinToInterrupt(pinEncoderCW),  OnScrollChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnScrollChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(pinBtnEnter),   OnButtonPress,  CHANGE);
@@ -193,7 +165,7 @@ void setup(void) {
   debugln("Battery: " + String(MeasureBatteryVoltage(), 2) + " V");
 }
 
-// LOOP
+// Loop (same as before)
 void loop() {
   if (encoderMoved) {
     int8_t delta = AnalyzeEncoderChange();
@@ -220,32 +192,29 @@ void loop() {
   }
 }
 
-// ───────RedrawMainMenu────────────
+// Redraw menu
 void RedrawMainMenu() {
-  u8g2.firstPage();
-  do {
-    DisplayMainMenu(pageOffset);
-    HighlightSelectedItem(selectedItem, pageOffset);
-  } while (u8g2.nextPage());
+  tft.fillScreen(ILI9341_BLACK);
+  DisplayMainMenu(pageOffset);
+  HighlightSelectedItem(selectedItem, pageOffset);
 }
 
-// ────────DisplayIntroScreen──────────
+// Intro
 void DisplayIntroScreen(void) {
+  tft.fillScreen(ILI9341_BLUE);
   u8g2.setFont(u8g2_font_helvB14_te);
-  u8g2.drawStr(20, 50,  "Dr. Royal Rife");
-  u8g2.drawStr(55, 90,  "Machine");
+  u8g2.setForegroundColor(ILI9341_YELLOW);
+  u8g2.drawUTF8(20, 50, "Dr. Royal Rife");
+  u8g2.drawUTF8(55, 90, "Machine");
   u8g2.setFont(u8g2_font_7x14_tr);
-  u8g2.drawStr(60, 140, "2024");
+  u8g2.drawUTF8(60, 140, "2024");
+  u8g2.setForegroundColor(ILI9341_WHITE);  // Reset
 }
 
-// ──────────DisplayMainMenu────────────
+// Main menu
 void DisplayMainMenu(int pgOffset) {
-  u8g2.setFont(u8g2_font_6x12_t_cyrillic);
-  u8g2.setDrawColor(1);
-
   // Top bar
-  u8g2.drawBox(0, 0, 240, 18);
-  u8g2.setDrawColor(0);
+  tft.fillRect(0, 0, 320, 18, ILI9341_NAVY);
   u8g2.setFont(u8g2_font_7x14B_tf);
   u8g2.drawUTF8(4, 2, "Select Program");
 
@@ -253,32 +222,32 @@ void DisplayMainMenu(int pgOffset) {
   char buf[12];
   snprintf(buf, sizeof(buf), "%.2fV", v);
   u8g2.setFont(u8g2_font_6x12_tf);
-  u8g2.drawStr(240 - u8g2.getUTF8Width(buf) - 4, 3, buf);
+  u8g2.drawUTF8(320 - u8g2.getUTF8Width(buf) - 4, 3, buf);
 
-  u8g2.setDrawColor(1);
-
-  // Menu items
+  // Items
   int y = 22;
+  u8g2.setFont(u8g2_font_6x12_t_cyrillic);  // Supports Cyrillic
   for (int i = pgOffset; i < pgOffset + 12 && i < numberOfDiagnoses; i++) {
     u8g2.drawUTF8(12, y, diagnoses[i]);
     y += 16;
   }
 }
 
-// ─────────HighlightSelectedItem─────────
+// Highlight
 void HighlightSelectedItem(byte item, byte offset) {
   int pos = item - offset;
   if (pos < 0 || pos > 11) return;
 
   int y1 = 22 + pos * 16 - 13;
-  u8g2.setDrawColor(1);
-  u8g2.drawFrame(4, y1, 240-8, 15);
-  u8g2.setDrawColor(2);           // XOR / inverse highlight
-  u8g2.drawBox(5, y1+1, 240-10, 13);
-  u8g2.setDrawColor(1);
+  tft.drawRect(4, y1, 320-8, 15, ILI9341_WHITE);
+  u8g2.setForegroundColor(ILI9341_BLACK);
+  u8g2.setBackgroundColor(ILI9341_WHITE);
+  u8g2.drawUTF8(12, y1 + 2, diagnoses[item-1]);
+  u8g2.setForegroundColor(ILI9341_WHITE);
+  u8g2.setBackgroundColor(ILI9341_BLACK);
 }
 
-// ────────ScrollItem──────────
+// Scroll
 void ScrollItem(bool direction) {
   if (direction == SCROLL_UP)   selectedItem++;
   else                          selectedItem--;
@@ -291,20 +260,18 @@ void ScrollItem(bool direction) {
 }
 
 byte CalculatePageOffset(byte cur) {
-  return ((cur-1) / 10) * 10;   // show 10 items per "page"
+  return ((cur-1) / 10) * 10;
 }
 
-// ──────────MeasureBatteryVoltage─────────
 float MeasureBatteryVoltage() {
   int val = analogRead(pinBatteryLevel);
   float v  = (val * referenceVoltage) / 1023.0;
   return v / (R2 / (R1 + R2));
 }
 
-// ───────────ProcessButtonClick───────────
 void ProcessButtonClick() {
   if (isGeneratingFrequency) {
-    isGeneratingFrequency = false;   // request abort
+    isGeneratingFrequency = false;
     debugln("Abort requested");
     return;
   }
@@ -322,7 +289,6 @@ void ProcessButtonClick() {
   }
 }
 
-// ──────────GenerateFrequency──────────
 bool GenerateFrequency() {
   int count = 0;
   for (int i = 0; i < 10; i++) {
@@ -334,6 +300,8 @@ bool GenerateFrequency() {
 
   gen.EnableOutput(true);
 
+  tft.fillScreen(ILI9341_BLACK);
+
   for (int i = 0; i < count; i++) {
     uint16_t freq = frequencies[(selectedItem-1)*10 + i];
     if (freq == 0) continue;
@@ -343,19 +311,17 @@ bool GenerateFrequency() {
     String sFreq = String(freq);
     String sSeq  = String(i+1);
 
-    u8g2.firstPage();
-    do {
-      u8g2.setFont(u8g2_font_helvB12_te);
-      u8g2.drawUTF8(20, 40, "Therapy in progress");
-      u8g2.setFont(u8g2_font_9x15_tf);
-      u8g2.drawUTF8(20, 80,  "Seq: ");   u8g2.print(sSeq);
-      u8g2.drawUTF8(20, 110, "Freq: ");  u8g2.print(sFreq); u8g2.print(" Hz");
-      u8g2.drawUTF8(20, 140, "Time left: "); u8g2.print(treatmentTime); u8g2.print(" min");
-    } while (u8g2.nextPage());
+    tft.fillScreen(ILI9341_BLACK);
+    u8g2.setFont(u8g2_font_helvB12_te);
+    u8g2.drawUTF8(20, 40, "Therapy in progress");
+    u8g2.setFont(u8g2_font_9x15_tf);
+    u8g2.drawUTF8(20, 80,  "Seq: ");   u8g2.print(sSeq.c_str());
+    u8g2.drawUTF8(20, 110, "Freq: ");  u8g2.print(sFreq.c_str()); u8g2.print(" Hz");
+    u8g2.drawUTF8(20, 140, "Time left: "); u8g2.print(treatmentTime); u8g2.print(" min");
 
     unsigned long start = millis();
     while (millis() - start < timePerFreq_ms) {
-      if (!isGeneratingFrequency) {     // abort requested
+      if (!isGeneratingFrequency) {
         gen.EnableOutput(false);
         return true;
       }
@@ -371,32 +337,26 @@ bool GenerateFrequency() {
   PlayTone(THREE_BEEPS);
 
   strComplete = (char*)"Finished!";
-  u8g2.firstPage();
-  do {
-    u8g2.setFont(u8g2_font_helvB14_te);
-    u8g2.drawStr(60, 100, strComplete);
-  } while (u8g2.nextPage());
+  tft.fillScreen(ILI9341_GREEN);
+  u8g2.setForegroundColor(ILI9341_BLACK);
+  u8g2.setFont(u8g2_font_helvB14_te);
+  u8g2.drawUTF8(60, 100, strComplete);
+  u8g2.setForegroundColor(ILI9341_WHITE);
 
   delay(2400);
   strComplete = (char*)"";
 
   RedrawMainMenu();
 
-  // Optional auto-shutdown
-  // digitalWrite(pinShutdown1, LOW);
-  // digitalWrite(pinShutdown2, HIGH);
-
   return false;
 }
 
-// ──────────Shutdown───────────
 void Shutdown() {
   digitalWrite(pinShutdown1, LOW);
   digitalWrite(pinShutdown2, HIGH);
   debugln("Shutdown requested");
 }
 
-// ─────────PlayTone───────────
 void PlayTone(int cnt) {
   for (int i = 0; i < cnt; i++) {
     tone(pinBeepOut, PIEZO_BEEP_TONE, PEIZO_BEEP_LENGTH);
@@ -404,12 +364,10 @@ void PlayTone(int cnt) {
   }
 }
 
-// ──── encoder & button ───
 void OnScrollChange() {
   encoderMoved = true;
 }
 
-// helper call
 int8_t AnalyzeEncoderChange() {
   encoderMoved = false;
   static uint8_t lrmem = 3;
@@ -429,7 +387,6 @@ int8_t AnalyzeEncoderChange() {
   return 0;
 }
 
-// helper call
 void OnButtonPress() {
   static unsigned long tPress = 0;
   static int lastState = HIGH;
@@ -440,7 +397,6 @@ void OnButtonPress() {
     if (state == LOW) {
       tPress = millis();
     } else {
-      // released
       unsigned long dur = millis() - tPress;
       if (dur >= LONG_DELTA) {
         buttonOutput = STATE_LONG;
