@@ -412,29 +412,102 @@ tft.drawRoundRect(cx-i2, cy-i2, i, i, i/8, tft.color565(i, 0, 0));
 tft.SetFont();
 */
 
+/* Basic (Small) Cyrillic Fonts
+These are bitmap fonts with Cyrillic coverage intended for small displays:
+u8g2_font_4x6_t_cyrillic
+u8g2_font_5x7_t_cyrillic
+u8g2_font_5x8_t_cyrillic
+u8g2_font_6x12_t_cyrillic
+u8g2_font_6x13_t_cyrillic
+u8g2_font_6x13B_t_cyrillic (bold variant)
+u8g2_font_7x13_t_cyrillic
+u8g2_font_8x13_t_cyrillic
+
+ Medium-Sized Cyrillic Fonts
+These are larger and more legible at modest screen resolutions:
+u8g2_font_9x15_t_cyrillic
+u8g2_font_cu12_t_cyrillic (unified Unicode font covering many sizes)
+
+Proportional/High-Quality Cyrillic Fonts
+u8g2_font_inr24_t_cyrillic */
+
 #include <SPI.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ILI9341.h>
 #include <U8g2_for_Adafruit_GFX.h>
 
 #define TFT_CS   53
-#define TFT_DC   49
-#define TFT_RST  48   // CHANGE if different - very important!
+#define TFT_DC   48
+#define TFT_RST  49   // CHANGE if different - very important!
 
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 U8G2_FOR_ADAFRUIT_GFX u8g2;
 
 // Frame dimensions for landscape (horizontal) 320x240
-const int FRAME_X = 15;
-const int FRAME_Y = 10;
-const int FRAME_W = 290;
-const int FRAME_H = 220;
+const int FRAME_X = 2;
+const int FRAME_Y = 2;
+const int FRAME_W = 316;
+const int FRAME_H = 236;
 
 // Gold color palette
 #define GOLD1  tft.color565(255, 215, 0)
 #define GOLD2  tft.color565(218, 165, 32)
 #define GOLD3  tft.color565(184, 134, 11)
 #define GOLD4  tft.color565(255, 236, 139)
+
+void setup() {
+  tft.begin();
+  tft.setRotation(1); // Landscape
+  tft.fillScreen(ILI9341_DARKGREY);
+
+  DrawFrame();
+
+  u8g2.begin(tft);
+
+  const char* text = "Привет, мир!";
+
+  // Calculate text area inside the frame
+  int text_area_x = FRAME_X + 30;
+  int text_area_y = FRAME_Y + 50;
+  int yStep = 32;
+
+  // 1st line: Large, bold, white
+  //u8g2.setFont(u8g2_font_ncenB24_cyrillic);
+  u8g2.setFont(u8g2_font_inr24_t_cyrillic);
+  u8g2.setForegroundColor(ILI9341_WHITE);
+  u8g2.setCursor(text_area_x, text_area_y);
+  u8g2.print("Привет Валик!");
+
+  // 2nd line: Medium, gold
+  //u8g2.setFont(u8g2_font_helvB14_cyrillic);
+  u8g2.setFont(u8g2_font_6x13_t_cyrillic);
+  u8g2.setForegroundColor(GOLD2);
+  u8g2.setCursor(text_area_x, text_area_y + yStep);
+  u8g2.print(text);
+
+  // 3rd line: Small, blue
+  //u8g2.setFont(u8g2_font_6x13_cyrillic);
+  u8g2.setFont(u8g2_font_cu12_t_cyrillic);
+  u8g2.setForegroundColor(ILI9341_CYAN);
+  u8g2.setCursor(text_area_x, text_area_y + 2*yStep);
+  u8g2.print(text);
+
+  // 4th line: Script, magenta
+  //u8g2.setFont(u8g2_font_lubB14_cyrillic);
+  u8g2.setFont(u8g2_font_cu12_t_cyrillic);
+  u8g2.setForegroundColor(ILI9341_MAGENTA);
+  u8g2.setCursor(text_area_x, text_area_y + 3*yStep);
+  u8g2.print(text);
+
+  // 5th line: Small, green
+  //u8g2.setFont(u8g2_font_7x14_cyrillic);
+  //u8g2.setFont(u8g2_font_9x15_t_cyrillic);
+  //u8g2.setFont(u8g2_font_10x20_t_cyrillic);
+  u8g2.setForegroundColor(ILI9341_GREENYELLOW);
+  u8g2.setCursor(text_area_x, text_area_y + 4*yStep);
+  u8g2.print("Larger Шрифт");
+}
+
 
 void DrawFrame() {
   // Outer thick gold border
@@ -455,53 +528,5 @@ void DrawFrame() {
   tft.fillRoundRect(FRAME_X+20, FRAME_Y+20, FRAME_W-40, FRAME_H-40, 8, ILI9341_BLACK);
 }
 
-void setup() {
-  tft.begin();
-  tft.setRotation(1); // Landscape
-  tft.fillScreen(ILI9341_DARKGREY);
+void loop() {}
 
-  DrawFrame();
-
-  u8g2.begin(tft);
-
-  const char* text = "Привет, мир!";
-
-  // Calculate text area inside the frame
-  int text_area_x = FRAME_X + 30;
-  int text_area_y = FRAME_Y + 50;
-  int yStep = 32;
-
-  // 1st line: Large, bold, white
-  u8g2.setFont(u8g2_font_ncenB24_cyrillic);
-  u8g2.setForegroundColor(ILI9341_WHITE);
-  u8g2.setCursor(text_area_x, text_area_y);
-  u8g2.print(text);
-
-  // 2nd line: Medium, gold
-  u8g2.setFont(u8g2_font_helvB14_cyrillic);
-  u8g2.setForegroundColor(GOLD2);
-  u8g2.setCursor(text_area_x, text_area_y + yStep);
-  u8g2.print(text);
-
-  // 3rd line: Small, blue
-  u8g2.setFont(u8g2_font_6x13_cyrillic);
-  u8g2.setForegroundColor(ILI9341_CYAN);
-  u8g2.setCursor(text_area_x, text_area_y + 2*yStep);
-  u8g2.print(text);
-
-  // 4th line: Script, magenta
-  u8g2.setFont(u8g2_font_lubB14_cyrillic);
-  u8g2.setForegroundColor(ILI9341_MAGENTA);
-  u8g2.setCursor(text_area_x, text_area_y + 3*yStep);
-  u8g2.print(text);
-
-  // 5th line: Small, green
-  u8g2.setFont(u8g2_font_7x14_cyrillic);
-  u8g2.setForegroundColor(ILI9341_GREENYELLOW);
-  u8g2.setCursor(text_area_x, text_area_y + 4*yStep);
-  u8g2.print(text);
-}
-
-void loop() {
-  // Nothing here
-}
