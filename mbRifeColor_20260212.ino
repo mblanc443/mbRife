@@ -1,7 +1,6 @@
-// Arduino Mega2560 + 2.8" 320x240 TFT (ILI9341)
 // Uses Adafruit_ILI9341 + U8g2_for_Adafruit_GFX for Cyrillic
+// Arduino Mega2560 + 2.8" 320x240 TFT (ILI9341)
 // Optimized partial redraw for fast scrolling
-// updated algorithm for encoder 
 #include <EEPROM.h>
 #include <AD9833.h>    // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <SPI.h>
@@ -22,7 +21,6 @@
 #define TFT_CS   53
 #define TFT_DC   48
 #define TFT_RST  49
-#define TFT_BL   13 // backlight (change to free pin like 44 if needed)
 
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 U8G2_FOR_ADAFRUIT_GFX u8g2gfx;
@@ -120,7 +118,7 @@ const int THREE_BEEPS = 3;
 
 const int PIEZO_BEEP_TONE   = 2000;
 const int PEIZO_BEEP_LENGTH = 1000;
-const int PEIZO_BEEP_PAUSE  = 500;
+const int PEIZO_BEEP_PAUSE  =  500;
 
 const byte ITEMS_PER_PAGE = 8;
 
@@ -128,7 +126,7 @@ const byte ITEMS_PER_PAGE = 8;
 byte selectedItem     = 1;
 byte prevSelectedItem = 1;          // NEW: track previous for partial update
 byte pageOffset       = 0;
-char* titleLine       = (char*)"Diagnoses:";
+char* titleLine       = (char*)"DIAGNOSES:";
 char treatmentTime[3] = "20";
 char* strComplete     = (char*)"";
 
@@ -137,7 +135,7 @@ uint16_t intFreqToGenerate = 0;
 
 volatile bool encoderMoved    = false;
 volatile bool btnEnterPressed = false;
-volatile int buttonOutput     = 0;
+volatile int  buttonOutput    = 0;
 
 enum {STATE_NORMAL, STATE_SHORT, STATE_LONG};
 long LONG_DELTA     = 1500UL;
@@ -156,50 +154,45 @@ const int LIST_Y_START   = 50;     // below title bar + margin
 const int ITEM_HEIGHT    = 24;     // line spacing + padding
 const int TEXT_Y_OFFSET  = 18;     // baseline adjustment for font
 
+// titlE
+const int TITLE_BAR_HIGHT = 30;
+
 // ======= SETUP ====================
 void setup() {
   Serial.begin(9600);
-
   tft.begin();
-  tft.setRotation(1);                   // Landscape 320x240 - try 3 if inverted
+  tft.setRotation(1);                   // Landscape 320x240
   tft.fillScreen(ILI9341_BLACK);
-
+  //
   u8g2gfx.begin(tft);
   u8g2gfx.setFontMode(1);               // Transparent
   u8g2gfx.setFontDirection(0);
-  u8g2gfx.setForegroundColor(ILI9341_WHITE);
+  u8g2gfx.setForegroundColor(ILI9341_GREEN);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-
-  pinMode(TFT_BL, OUTPUT);
-  digitalWrite(TFT_BL, HIGH);
-
+  //
   pinMode(pinShutdown1, OUTPUT);
   pinMode(pinShutdown2, OUTPUT);
   digitalWrite(pinShutdown1, HIGH);
   digitalWrite(pinShutdown2, LOW);
-
+  //
   pinMode(pinEncoderCW,  INPUT_PULLUP);
   pinMode(pinEncoderCCW, INPUT_PULLUP);
   pinMode(pinBtnEnter,   INPUT_PULLUP);
-
+  //
   gen.Begin();
   gen.EnableOutput(false);
-
   // Show intro
   DisplayIntroScreen(); 
   delay(2500);
-
   // Draw static top bar ONCE
-  DrawTitleFrame();
+  DrawTitleBar();
   DrawBattery();
-
   // Initial menu (full draw)
-  DisplayMainMenu(pageOffset);
-
+  DrawList();
+  //
   attachInterrupt(digitalPinToInterrupt(pinEncoderCW),  OnScrollChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnScrollChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(pinBtnEnter),   OnButtonPress,  CHANGE);
-
   // Restore last selection
   byte saved = EEPROM.read(eepromAddress);
   if (saved >= 1 && saved <= numberOfDiagnoses) {
@@ -240,22 +233,48 @@ void ScrollItem(bool direction) {
   if (newPageOffset != pageOffset) {
     // Page changed → full list redraw (but skip title/battery)
     pageOffset = newPageOffset;
-    RedrawListAreaOnly();
+    DrawList(); //RedrawListAreaOnly();
   } else {
     // Same page → partial update only
-    RedrawOnlySelectionChange();
+    RedrawSelectionOnly();
+  }
+}
+
+void DrawList() {
+   // Clear list area only
+  tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK); 
+  //
+  u8g2gfx.setFont(u8g2_font_10x20_tf);
+  int currentPosY = LIST_Y_START;
+
+  for (byte currentItem = 0; currentItem < ITEMS_PER_PAGE; currentItem++) {
+    int diagnoseIndex = pageOffset + currentItem;
+    if (diagnoseIndex >= numberOfDiagnoses) break;
+    //
+    bool isSelected = (diagnoseIndex == (selectedItem - 1));
+    //
+    if (isSelected) {
+      tft.fillRect(8, currentPosY - 19, 304, 24, ILI9341_NAVY); //HIGHLIGHT
+      u8g2gfx.setForegroundColor(ILI9341_YELLOW); // change selected to yellow font 
+    } else {
+      u8g2gfx.setForegroundColor(ILI9341_GREEN);
+    }
+    u8g2gfx.setCursor(18, currentPosY);
+    u8g2gfx.print(diagnoses[diagnoseIndex]);
+    // update current item position
+    currentPosY += ITEM_HEIGHT;
   }
 }
 
 // Partial redraw: only old + new selected item
-void RedrawOnlySelectionChange() {
+void RedrawSelectionOnly() {
   u8g2gfx.setFont(u8g2_font_10x20_tf);
 
   // 1. Un-highlight previous item
   byte prevLocalIdx = prevSelectedItem - 1 - pageOffset;
   int prevY = LIST_Y_START + prevLocalIdx * ITEM_HEIGHT;
   tft.fillRect(8, prevY - 19, 304, 24, ILI9341_BLACK);   // erase highlight
-  u8g2gfx.setForegroundColor(ILI9341_WHITE);
+  u8g2gfx.setForegroundColor(ILI9341_GREEN);
   u8g2gfx.setCursor(18, prevY);
   u8g2gfx.print(diagnoses[prevSelectedItem - 1]);
 
@@ -266,33 +285,6 @@ void RedrawOnlySelectionChange() {
   u8g2gfx.setForegroundColor(ILI9341_YELLOW);
   u8g2gfx.setCursor(18, newY);
   u8g2gfx.print(diagnoses[selectedItem - 1]);
-}
-
-// Full list redraw (only list area, no top bar)
-void RedrawListAreaOnly() {
-  // Clear list area only
-  tft.fillRect(0, LIST_Y_START - 5, 320, 240 - (LIST_Y_START - 5), ILI9341_BLACK);
-
-  u8g2gfx.setFont(u8g2_font_10x20_tf);
-  int y = LIST_Y_START;
-
-  for (byte i = 0; i < ITEMS_PER_PAGE; i++) {
-    int idx = pageOffset + i;
-    if (idx >= numberOfDiagnoses) break;
-
-    bool sel = (idx == (selectedItem - 1));
-
-    if (sel) {
-      tft.fillRect(8, y - 19, 304, 24, ILI9341_NAVY);
-      u8g2gfx.setForegroundColor(ILI9341_YELLOW); // change selectedto yellow font 
-    } else {
-      u8g2gfx.setForegroundColor(ILI9341_WHITE);
-    }
-
-    u8g2gfx.setCursor(18, y);
-    u8g2gfx.print(diagnoses[idx]);
-    y += ITEM_HEIGHT;
-  }
 }
 
 // ======= DISPLAY FUNCTIONS (mostly unchanged, but called less) =======
@@ -321,12 +313,12 @@ void DisplayIntroScreen(void) {
   u8g2gfx.print("Wait...");
 }
 
-void DrawTitleFrame() {
-  tft.fillRect(0, 0, 320, 30, ILI9341_BLUE);
-  u8g2gfx.setFont(u8g2_font_helvB14_te);
-  u8g2gfx.setForegroundColor(ILI9341_WHITE);
-  int w = u8g2gfx.getUTF8Width(titleLine);
-  u8g2gfx.setCursor((320 - w) / 2, 26);
+void DrawTitleBar() {
+  tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
+  u8g2gfx.setFont(u8g2_font_t0_22b_tf); //u8g2_font_helvB14_te
+  u8g2gfx.setForegroundColor(ILI9341_YELLOW);
+  int titleWidth = u8g2gfx.getUTF8Width(titleLine);
+  u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
   u8g2gfx.print(titleLine);
 }
 
@@ -340,11 +332,6 @@ void DrawBattery() {
   u8g2gfx.print(s.c_str());
 }
 
-void DisplayMainMenu(byte pgOffset) {
-  // This is now only called once at start or on page change
-  RedrawListAreaOnly();   // list only
-}
-
 // ======= OTHER FUNCTIONS (unchanged) =======
 byte CalulatePageOffset(byte item) {
   return ((item - 1) / ITEMS_PER_PAGE) * ITEMS_PER_PAGE;
@@ -354,19 +341,19 @@ void SetSelectedItem(byte item) {
   selectedItem = item;
   pageOffset = CalulatePageOffset(item);
   prevSelectedItem = item;  // sync
-  RedrawListAreaOnly();     // full list on set
+  DrawList(); // full list on set
 }
 
 //  unchanged ...
 void DisplayTreatInProgressScreen(String frequency, String seq) {
   tft.fillScreen(ILI9341_BLACK);
-  DrawTitleFrame();
+  DrawTitleBar();
   DrawBattery();
 
   u8g2gfx.setFont(u8g2_font_helvB18_te);
   u8g2gfx.setForegroundColor(ILI9341_CYAN);
-  int w = u8g2gfx.getUTF8Width("Therapy");
-  u8g2gfx.setCursor((320 - w) / 2, 80);
+  int textWidth = u8g2gfx.getUTF8Width("Therapy");
+  u8g2gfx.setCursor((320 - textWidth) / 2, 80);
   u8g2gfx.print("Therapy");
 
   u8g2gfx.setFont(u8g2_font_9x15B_tf);
@@ -380,16 +367,16 @@ void DisplayTreatInProgressScreen(String frequency, String seq) {
     String line = "Seq: " + seq + "   Freq: " + frequency + " Hz";
     u8g2gfx.setFont(u8g2_font_helvB14_te);
     u8g2gfx.setForegroundColor(ILI9341_GREEN);
-    w = u8g2gfx.getUTF8Width(line.c_str());
-    u8g2gfx.setCursor((320 - w) / 2, 175);
+    textWidth = u8g2gfx.getUTF8Width(line.c_str());
+    u8g2gfx.setCursor((320 - textWidth) / 2, 175);
     u8g2gfx.print(line.c_str());
   }
 
   if (strlen(strComplete) > 0) {
     u8g2gfx.setFont(u8g2_font_helvB24_te);
     u8g2gfx.setForegroundColor(ILI9341_RED);
-    w = u8g2gfx.getUTF8Width(strComplete);
-    u8g2gfx.setCursor((320 - w) / 2, 190);
+    textWidth = u8g2gfx.getUTF8Width(strComplete);
+    u8g2gfx.setCursor((320 - textWidth) / 2, 190);
     u8g2gfx.print(strComplete);
   }
 }
@@ -412,31 +399,31 @@ bool GenerateFrequency() {
     intFreqToGenerate = frequencies[10 * (selectedItem - 1) + i];
     String freqStr = String(intFreqToGenerate);
     String seqStr  = String(i + 1);
-
+    //
     DisplayTreatInProgressScreen(freqStr, seqStr);
-
+    //
     gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
-
+    //
     while ((millis() - start) < fragmentTime && isGeneratingFrequency) {
       if (btnEnterPressed) {
         gen.EnableOutput(false);
         return true;  // aborted
       }
     }
-
+    //
     PlayTone(ONE_BEEP);
   }
-
+  //
   gen.EnableOutput(false);
   isGeneratingFrequency = false;
-
+  //
   strComplete = (char*)"Finished!";
   PlayTone(THREE_BEEPS);
   DisplayTreatInProgressScreen("", "");
-
   delay(3000);
+  //
   SetSelectedItem(selectedItem);
-
+  //
   strComplete = (char*)"";
   digitalWrite(pinShutdown1, LOW);
   digitalWrite(pinShutdown2, HIGH);
@@ -455,6 +442,9 @@ void ProcessButtonClick() {
       isGeneratingFrequency = false;
       btnEnterPressed = false;
       SetSelectedItem(selectedItem);
+      titleLine = (char*)"DIAGNOSES:";
+      DrawTitleBar();
+      DrawBattery();
     }
   } else {
     btnEnterPressed = true;  // signal abort
@@ -683,3 +673,4 @@ void PlayTone(int n) {
     delay(PEIZO_BEEP_PAUSE);
   }
 }
+
