@@ -1,9 +1,14 @@
 // Uses Adafruit_ILI9341 + U8g2_for_Adafruit_GFX for Cyrillic
 // Arduino Mega2560 + 2.8" 320x240 TFT (ILI9341)
 // Optimized partial redraw for fast scrolling
-// UPDATED: UpdateCountdown now uses per-digit partial redraws
+// UPDATED: UpdateCountdown now uses per-digit partial or SMART redraws
 //          → only the digits that actually change are cleared + redrawn.
 //          This eliminates the full-area black flash every second → no more visible flicker.
+// Also: To fix colon not displaying after first sequence:
+//          - Added forceFull parameter to UpdateCountdown to force redraw of all characters when screen is refreshed.
+//          - Moved initial UpdateCountdown call out of DisplayTreatInProgressScreen and into GenerateFrequency after each screen refresh.
+//          - Now passes current elapsedMs for accurate initial remaining time (fixes bug where it always showed full time briefly).
+//          - Removed static firstDraw as forceFull handles it.
 
 #include <EEPROM.h>
 #include <AD9833.h>    // https://github.com/Billwilliams1952/AD9833-Library-Arduino
@@ -359,25 +364,24 @@ void DisplayTreatInProgressScreen(String frequency, String seq) {
     u8g2gfx.setCursor((320 - textWidth) / 2, 190);
     u8g2gfx.print(strComplete);
   }
-  UpdateCountdown(0);   // initial draw (all digits)
+  // Note: Initial countdown now handled outside, with correct elapsed and forceFull=true
 }
 
-// ====== SMART COUNTDOWN for MINIMAL FLICKER ==========
-void UpdateCountdown(unsigned long elapsedMs) {
+// ======OPTIMIZED COUNTDOWN (MINIMAL FLICKER) ========
+void UpdateCountdown(unsigned long elapsedMs, bool forceFull = false) {
   static unsigned long lastUpdate = 0;
-  //
   unsigned long totalMs = atoi(treatmentTime) * 60000UL;
   unsigned long remainingMs = (elapsedMs >= totalMs) ? 0 : totalMs - elapsedMs;
   int minLeft = remainingMs / 60000UL;
   int secLeft = (remainingMs % 60000UL) / 1000;
-  //
   char buf[6];
+  //
   sprintf(buf, "%02d:%02d", minLeft, secLeft);
   // Prepare large font once per call
   u8g2gfx.setFont(u8g2_font_fub42_tf);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
-  // === ONE-TIME CALCULATION OF FIXED SLOT POSITIONS (digit slots use max width) ===
+  // === ONE-TIME CALCULATION OF FIXED SLOT POSITIONS (digit slots use max width)
   static bool positionsCalculated = false;
   static int  charX[5];
   static int  charW[5];
@@ -402,27 +406,23 @@ void UpdateCountdown(unsigned long elapsedMs) {
     charX[3] = cx; charW[3] = maxDigitW; cx += maxDigitW;  // tens of seconds
     charX[4] = cx; charW[4] = maxDigitW;                   // units of seconds
   }
-  // === SMART UPDATE: only redraw digits that actually changed ===
-  static bool firstDraw = true;
-  static char prevBuf[6] = "99:99";
+  // PARTIAL UPDATE: only redraw digits that actually changed (unless forceFull)
+  static char prevBuf[6] = "99:99";  // Initial dummy value
   //
   for (int i = 0; i < 5; i++) {
-    if (firstDraw || buf[i] != prevBuf[i]) {
+    if (forceFull || buf[i] != prevBuf[i]) {
       // 1. Clear only this character slot (no full-area black flash)
       tft.fillRect(charX[i], 96, charW[i], 45, ILI9341_BLACK);
       // 2. Center the new character inside its slot (handles different widths)
       char tmp[2] = {buf[i], 0};
       int actualW = u8g2gfx.getUTF8Width(tmp);
       int offset = (charW[i] - actualW) / 2;
-      //
       u8g2gfx.setCursor(charX[i] + offset, 140);
       u8g2gfx.print(tmp);
     }
   }
-
   // Remember for next call
-  for (int i = 0; i < 6; i++) prevBuf[i] = buf[i];
-  firstDraw = false;
+  strcpy(prevBuf, buf);
   lastUpdate = millis();
 }
 
@@ -448,6 +448,9 @@ bool GenerateFrequency() {
     String seqStr  = String(i + 1);
 
     DisplayTreatInProgressScreen(freqStr, seqStr);
+    // Immediately draw initial countdown with forceFull=true (since screen just cleared)
+    UpdateCountdown(millis() - sessionStart, true);
+
     gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
 
     while ((millis() - freqStart) < fragmentMs && isGeneratingFrequency) {
@@ -458,7 +461,7 @@ bool GenerateFrequency() {
       unsigned long now = millis();
       if (now - lastSecond >= 1000) {
         unsigned long elapsed = now - sessionStart;
-        UpdateCountdown(elapsed);
+        UpdateCountdown(elapsed);  // Normal partial update
         lastSecond = now;
       }
     }
@@ -471,7 +474,7 @@ bool GenerateFrequency() {
   PlayTone(THREE_BEEPS);
 
   DisplayTreatInProgressScreen("", "");
-  UpdateCountdown(atoi(treatmentTime) * 60000UL);
+  UpdateCountdown(atoi(treatmentTime) * 60000UL, true);  // Final 00:00 with forceFull
   delay(3000);
 
   titleLine = (char*)"DIAGNOSES:";
