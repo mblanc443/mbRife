@@ -157,6 +157,15 @@ const int TEXT_Y_OFFSET  = 18;     // baseline adjustment for font
 // titlE
 const int TITLE_BAR_HIGHT = 30;
 
+// Progress Circle
+const int CIRCLE_CENTER_X = 255;          // right side
+const int CIRCLE_CENTER_Y = 125;          // vertical center
+const int OUTER_RADIUS    = 58;           // large outer circle
+const int INNER_RADIUS    = 38;           // smaller inner circle
+const int RING_THICKNESS  = 20;           // ~1/4 diameter thickness between circles
+const int TOTAL_MINUTES   = 20;
+
+
 // ======= SETUP ====================
 void setup() {
   Serial.begin(9600);
@@ -245,6 +254,7 @@ void DrawList() {
   tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK); 
   //
   u8g2gfx.setFont(u8g2_font_10x20_tf);
+  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   int currentPosY = LIST_Y_START;
 
   for (byte currentItem = 0; currentItem < ITEMS_PER_PAGE; currentItem++) {
@@ -274,6 +284,7 @@ void RedrawSelectionOnly() {
   byte prevLocalIdx = prevSelectedItem - 1 - pageOffset;
   int prevY = LIST_Y_START + prevLocalIdx * ITEM_HEIGHT;
   tft.fillRect(8, prevY - 19, 304, 24, ILI9341_BLACK);   // erase highlight
+  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   u8g2gfx.setForegroundColor(ILI9341_GREEN);
   u8g2gfx.setCursor(18, prevY);
   u8g2gfx.print(diagnoses[prevSelectedItem - 1]);
@@ -316,6 +327,7 @@ void DisplayIntroScreen(void) {
 void DrawTitleBar() {
   tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
   u8g2gfx.setFont(u8g2_font_t0_22b_tf); //u8g2_font_helvB14_te
+  u8g2gfx.setBackgroundColor(ILI9341_BLUE);
   u8g2gfx.setForegroundColor(ILI9341_YELLOW);
   int titleWidth = u8g2gfx.getUTF8Width(titleLine);
   u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
@@ -326,6 +338,7 @@ void DrawBattery() {
   float v = MeasureBatteryVoltage();
   String s = String(v, 1) + "v";
   u8g2gfx.setFont(u8g2_font_9x18B_tf);
+  u8g2gfx.setBackgroundColor(ILI9341_BLUE);
   u8g2gfx.setForegroundColor(ILI9341_YELLOW);
   int w = u8g2gfx.getUTF8Width(s.c_str());
   u8g2gfx.setCursor(320 - w - 8, 23);
@@ -344,58 +357,83 @@ void SetSelectedItem(byte item) {
   DrawList(); // full list on set
 }
 
-//  unchanged ...
+// 
 void DisplayTreatInProgressScreen(String frequency, String seq) {
   tft.fillScreen(ILI9341_BLACK);
   DrawTitleBar();
   DrawBattery();
-
-  u8g2gfx.setFont(u8g2_font_helvB18_te);
-  u8g2gfx.setForegroundColor(ILI9341_CYAN);
-  int textWidth = u8g2gfx.getUTF8Width("Therapy");
-  u8g2gfx.setCursor((320 - textWidth) / 2, 80);
-  u8g2gfx.print("Therapy");
-
-  u8g2gfx.setFont(u8g2_font_9x15B_tf);
+  // Static labels
+  u8g2gfx.setFont(u8g2_font_fub20_tr); //u8g2_font_9x15B_tf
+  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   u8g2gfx.setForegroundColor(ILI9341_WHITE);
-  u8g2gfx.setCursor(45, 120);
-  u8g2gfx.print("Time: ");
-  u8g2gfx.print(treatmentTime);
-  u8g2gfx.print(" minutes");
-
+  u8g2gfx.setCursor(55, 70);
+  u8g2gfx.print("Remaining Time:");
+  //
   if (strlen(strComplete) == 0 && frequency.length() > 0) {
-    String line = "Seq: " + seq + "   Freq: " + frequency + " Hz";
+    String line = "Sequence: " + seq + "   Frequency: " + frequency + " Hz";
     u8g2gfx.setFont(u8g2_font_helvB14_te);
+    u8g2gfx.setBackgroundColor(ILI9341_BLACK);
     u8g2gfx.setForegroundColor(ILI9341_GREEN);
-    textWidth = u8g2gfx.getUTF8Width(line.c_str());
-    u8g2gfx.setCursor((320 - textWidth) / 2, 175);
+    int textWidth = u8g2gfx.getUTF8Width(line.c_str());
+    u8g2gfx.setCursor((320 - textWidth) / 2, 210);
     u8g2gfx.print(line.c_str());
   }
-
+  //
   if (strlen(strComplete) > 0) {
     u8g2gfx.setFont(u8g2_font_helvB24_te);
+    u8g2gfx.setBackgroundColor(ILI9341_BLACK);
     u8g2gfx.setForegroundColor(ILI9341_RED);
-    textWidth = u8g2gfx.getUTF8Width(strComplete);
+    int textWidth = u8g2gfx.getUTF8Width(strComplete);
     u8g2gfx.setCursor((320 - textWidth) / 2, 190);
     u8g2gfx.print(strComplete);
   }
+  // Initial countdown (will be updated in loop)
+  UpdateCountdown(0);
 }
 
+// COUNTDOWN
+void UpdateCountdown(unsigned long elapsedMs) {
+  static unsigned long lastUpdate = 0;
+  // calc time in milliseconds
+  unsigned long totalMs = atoi(treatmentTime) * 60000UL;
+  unsigned long remainingMs = (elapsedMs >= totalMs) ? 0 : totalMs - elapsedMs;
+  // calc minutes/seconds to display
+  int minLeft = remainingMs / 60000UL;
+  int secLeft = (remainingMs % 60000UL) / 1000;
+  //
+  char buf[6];
+  sprintf(buf, "%02d:%02d", minLeft, secLeft);
+  u8g2gfx.setFont(u8g2_font_fub42_tf);          // large size  u8g2_font_helvB24_te
+  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+  u8g2gfx.setForegroundColor(ILI9341_MAGENTA); //ILI9341_YELLOW
+  int textWidth = u8g2gfx.getUTF8Width(buf);
+  // Clear only the countdown area (prevents flicker)
+  tft.fillRect(88, 96, textWidth+5, 45, ILI9341_BLACK);
+  u8g2gfx.setCursor(160 - textWidth / 2, 140);           // centered in the right area
+  u8g2gfx.print(buf);
+
+  lastUpdate = millis();
+}
+
+// Replace your GenerateFrequency with this version (only countdown update added)
 bool GenerateFrequency() {
   int numFreq = 0;
   for (int i = 0; i < 10; i++) {
     if (frequencies[10 * (selectedItem - 1) + i] > 0) numFreq++;
   }
-
+  //
   if (numFreq == 0) return false;
-
-  float fragmentTime = (atoi(treatmentTime) * 60000UL) / (float)numFreq;
-
+  //
+  unsigned long fragmentMs = (atoi(treatmentTime) * 60000UL) / numFreq;
+  unsigned long sessionStart = millis();
+  //
   gen.EnableOutput(true);
   strComplete = (char*)"";
-
+  //
+  unsigned long lastSecond = 0;
+  //
   for (int i = 0; i < numFreq; i++) {
-    unsigned long start = millis();
+    unsigned long freqStart = millis();
     intFreqToGenerate = frequencies[10 * (selectedItem - 1) + i];
     String freqStr = String(intFreqToGenerate);
     String seqStr  = String(i + 1);
@@ -404,13 +442,18 @@ bool GenerateFrequency() {
     //
     gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
     //
-    while ((millis() - start) < fragmentTime && isGeneratingFrequency) {
+    while ((millis() - freqStart) < fragmentMs && isGeneratingFrequency) {
       if (btnEnterPressed) {
         gen.EnableOutput(false);
-        return true;  // aborted
+        return true;
+      }
+      unsigned long now = millis();
+      if (now - lastSecond >= 1000) {
+        unsigned long elapsed = now - sessionStart;
+        UpdateCountdown(elapsed);
+        lastSecond = now;
       }
     }
-    //
     PlayTone(ONE_BEEP);
   }
   //
@@ -419,18 +462,25 @@ bool GenerateFrequency() {
   //
   strComplete = (char*)"Finished!";
   PlayTone(THREE_BEEPS);
+  //
   DisplayTreatInProgressScreen("", "");
+  UpdateCountdown(atoi(treatmentTime) * 60000UL);  // show 00:00
+  //
   delay(3000);
   //
-  SetSelectedItem(selectedItem);
+  titleLine = (char*)"DIAGNOSES:";
+  DrawTitleBar();
+  DrawBattery();
+  DrawList();
   //
   strComplete = (char*)"";
   digitalWrite(pinShutdown1, LOW);
   digitalWrite(pinShutdown2, HIGH);
-
+  //
   return false;
 }
 
+//
 void ProcessButtonClick() {
   if (!isGeneratingFrequency) {
     EEPROM.update(eepromAddress, selectedItem);
@@ -459,26 +509,22 @@ void Shutdown() {
   debugln("Shutdown initiated");
 }
 
-// ===== ENCODER / BUTTON ====================
+// ===== ENCODER / BUTTON ======
 void OnScrollChange() {
   encoderMoved = true;
 }
 
-// Buxtronix/Oleg Mazurov algorithm analyzer
+// Buxtronix/Oleg Mazurov algorithm 
 int8_t AnalyzeEncoderChange() {
     encoderMoved = false;
-
     static uint8_t prev_AB = 0b00000011;  // initial state (both high = detent)
     static int8_t  encoderVal = 0;
-
     // Read current A/B states (CW = pinEncoderCW, CCW = pinEncoderCCW)
     uint8_t A = digitalRead(pinEncoderCW);
     uint8_t B = digitalRead(pinEncoderCCW);
     uint8_t current_AB = (A << 1) | B;     // 00, 01, 10, 11
-
     // Shift in new state (now 4-bit: old AB + new AB)
     uint8_t transition = (prev_AB << 2) | current_AB;
-
     // Standard 4-state quadrature lookup table (very forgiving for bounce)
     static const int8_t deltaTable[16] = {
         0,   // 0000 - invalid/stable
@@ -498,28 +544,23 @@ int8_t AnalyzeEncoderChange() {
        -1,   // 1110 - CCW
         0    // 1111 - stable
     };
-
+    //
     int8_t delta = deltaTable[transition];
     encoderVal += delta;
     int8_t result = 0;
-
     // Full-step mode: trigger only on complete detent (most reliable, no skipping)
     if (encoderVal <= -4) { result = -1; encoderVal = 0; }
     if (encoderVal >=  4) { result =  1; encoderVal = 0; }
-
     // ── Optional: half-step mode (twice as sensitive, can feel "faster")
     if (encoderVal <= -2) { result = -1; encoderVal += 2; }
     if (encoderVal >=  2) { result =  1; encoderVal -= 2; }
-
     prev_AB = current_AB;
-
     // Keep your debug print if you want
     if (result != 0) {
       debug("Step: "); debug(result);
       debug("  AB: "); debug(current_AB);  //, BIN);
       debug("  encVal: "); debugln(encoderVal);
     }
-
     return result;
 }
 
@@ -541,14 +582,13 @@ void OnButtonPress() {
 
   boolean buttonStateChange = (buttonState != lastButtonStatus);
   boolean buttonReleased = (buttonStateChange && (buttonState == HIGH));
-
   lastButtonStatus = buttonState;
-
+  //
   if (!buttonStateChange) {
        buttonOutput = STATE_NORMAL | buttonOutput;
        return;
   }
-
+  //
   if (timeoutLong && buttonReleased) {
       buttonOutput = STATE_LONG | buttonOutput;
       btnEnterPressed = true;
@@ -653,7 +693,7 @@ void DrawGoldenCrown(int cx, int topY) {
     tft.drawPixel(x, y, GOLD2);
   }
 
-  // ------------------- EXTRA SPARKLES -------------------
+  // -------- EXTRA SPARKLES -----------
   tft.drawPixel(leftX - 3, peakBaseY - leftH / 2, GOLD4);
   tft.drawPixel(rightX + 3, peakBaseY - rightH / 2, GOLD4);
   tft.drawPixel(centerX, peakBaseY - centerH + 2, GOLD4);
