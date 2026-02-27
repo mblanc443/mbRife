@@ -1,6 +1,10 @@
 // Uses Adafruit_ILI9341 + U8g2_for_Adafruit_GFX for Cyrillic
 // Arduino Mega2560 + 2.8" 320x240 TFT (ILI9341)
 // Optimized partial redraw for fast scrolling
+// UPDATED: UpdateCountdown now uses per-digit partial redraws
+//          → only the digits that actually change are cleared + redrawn.
+//          This eliminates the full-area black flash every second → no more visible flicker.
+
 #include <EEPROM.h>
 #include <AD9833.h>    // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <SPI.h>
@@ -124,7 +128,7 @@ const byte ITEMS_PER_PAGE = 8;
 
 // State variables
 byte selectedItem     = 1;
-byte prevSelectedItem = 1;          // NEW: track previous for partial update
+byte prevSelectedItem = 1;
 byte pageOffset       = 0;
 char* titleLine       = (char*)"DIAGNOSES:";
 char treatmentTime[3] = "20";
@@ -150,19 +154,19 @@ const int FRAME_W = 316;
 const int FRAME_H = 236;
 
 // List area constants (avoid touching top bar)
-const int LIST_Y_START   = 50;     // below title bar + margin
-const int ITEM_HEIGHT    = 24;     // line spacing + padding
-const int TEXT_Y_OFFSET  = 18;     // baseline adjustment for font
+const int LIST_Y_START   = 50;
+const int ITEM_HEIGHT    = 24;
+const int TEXT_Y_OFFSET  = 18;
 
-// titlE
+// title
 const int TITLE_BAR_HIGHT = 30;
 
 // Progress Circle
-const int CIRCLE_CENTER_X = 255;          // right side
-const int CIRCLE_CENTER_Y = 125;          // vertical center
-const int OUTER_RADIUS    = 58;           // large outer circle
-const int INNER_RADIUS    = 38;           // smaller inner circle
-const int RING_THICKNESS  = 20;           // ~1/4 diameter thickness between circles
+const int CIRCLE_CENTER_X = 255;
+const int CIRCLE_CENTER_Y = 125;
+const int OUTER_RADIUS    = 58;
+const int INNER_RADIUS    = 38;
+const int RING_THICKNESS  = 20;
 const int TOTAL_MINUTES   = 20;
 
 
@@ -170,39 +174,30 @@ const int TOTAL_MINUTES   = 20;
 void setup() {
   Serial.begin(9600);
   tft.begin();
-  tft.setRotation(1);                   // Landscape 320x240
+  tft.setRotation(1);
   tft.fillScreen(ILI9341_BLACK);
-  //
   u8g2gfx.begin(tft);
-  u8g2gfx.setFontMode(1);               // Transparent
+  u8g2gfx.setFontMode(1);
   u8g2gfx.setFontDirection(0);
   u8g2gfx.setForegroundColor(ILI9341_GREEN);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-  //
   pinMode(pinShutdown1, OUTPUT);
   pinMode(pinShutdown2, OUTPUT);
   digitalWrite(pinShutdown1, HIGH);
   digitalWrite(pinShutdown2, LOW);
-  //
   pinMode(pinEncoderCW,  INPUT_PULLUP);
   pinMode(pinEncoderCCW, INPUT_PULLUP);
   pinMode(pinBtnEnter,   INPUT_PULLUP);
-  //
   gen.Begin();
   gen.EnableOutput(false);
-  // Show intro
   DisplayIntroScreen(); 
   delay(2500);
-  // Draw static top bar ONCE
   DrawTitleBar();
   DrawBattery();
-  // Initial menu (full draw)
   DrawList();
-  //
   attachInterrupt(digitalPinToInterrupt(pinEncoderCW),  OnScrollChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnScrollChange, CHANGE);
   attachInterrupt(digitalPinToInterrupt(pinBtnEnter),   OnButtonPress,  CHANGE);
-  // Restore last selection
   byte saved = EEPROM.read(eepromAddress);
   if (saved >= 1 && saved <= numberOfDiagnoses) {
     SetSelectedItem(saved);
@@ -227,8 +222,7 @@ void loop() {
 
 // ======= OPTIMIZED SCROLL HANDLING =======
 void ScrollItem(bool direction) {
-  prevSelectedItem = selectedItem;  // remember old one
-
+  prevSelectedItem = selectedItem;
   if (direction == SCROLL_UP) {
     selectedItem++;
     if (selectedItem > numberOfDiagnoses) selectedItem = 1;
@@ -236,60 +230,46 @@ void ScrollItem(bool direction) {
     selectedItem--;
     if (selectedItem < 1) selectedItem = numberOfDiagnoses;
   }
-
   byte newPageOffset = CalulatePageOffset(selectedItem);
-
   if (newPageOffset != pageOffset) {
-    // Page changed → full list redraw (but skip title/battery)
     pageOffset = newPageOffset;
-    DrawList(); //RedrawListAreaOnly();
+    DrawList();
   } else {
-    // Same page → partial update only
     RedrawSelectionOnly();
   }
 }
 
 void DrawList() {
-   // Clear list area only
   tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK); 
-  //
   u8g2gfx.setFont(u8g2_font_10x20_tf);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   int currentPosY = LIST_Y_START;
-
   for (byte currentItem = 0; currentItem < ITEMS_PER_PAGE; currentItem++) {
     int diagnoseIndex = pageOffset + currentItem;
     if (diagnoseIndex >= numberOfDiagnoses) break;
-    //
     bool isSelected = (diagnoseIndex == (selectedItem - 1));
-    //
     if (isSelected) {
-      tft.fillRect(8, currentPosY - 19, 304, 24, ILI9341_NAVY); //HIGHLIGHT
-      u8g2gfx.setForegroundColor(ILI9341_YELLOW); // change selected to yellow font 
+      tft.fillRect(8, currentPosY - 19, 304, 24, ILI9341_NAVY);
+      u8g2gfx.setForegroundColor(ILI9341_YELLOW);
     } else {
       u8g2gfx.setForegroundColor(ILI9341_GREEN);
     }
     u8g2gfx.setCursor(18, currentPosY);
     u8g2gfx.print(diagnoses[diagnoseIndex]);
-    // update current item position
     currentPosY += ITEM_HEIGHT;
   }
 }
 
-// Partial redraw: only old + new selected item
 void RedrawSelectionOnly() {
   u8g2gfx.setFont(u8g2_font_10x20_tf);
-
-  // 1. Un-highlight previous item
   byte prevLocalIdx = prevSelectedItem - 1 - pageOffset;
   int prevY = LIST_Y_START + prevLocalIdx * ITEM_HEIGHT;
-  tft.fillRect(8, prevY - 19, 304, 24, ILI9341_BLACK);   // erase highlight
+  tft.fillRect(8, prevY - 19, 304, 24, ILI9341_BLACK);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   u8g2gfx.setForegroundColor(ILI9341_GREEN);
   u8g2gfx.setCursor(18, prevY);
   u8g2gfx.print(diagnoses[prevSelectedItem - 1]);
 
-  // 2. Highlight new selected item
   byte newLocalIdx = selectedItem - 1 - pageOffset;
   int newY = LIST_Y_START + newLocalIdx * ITEM_HEIGHT;
   tft.fillRect(8, newY - 19, 304, 24, ILI9341_NAVY);
@@ -298,11 +278,10 @@ void RedrawSelectionOnly() {
   u8g2gfx.print(diagnoses[selectedItem - 1]);
 }
 
-// ======= DISPLAY FUNCTIONS (mostly unchanged, but called less) =======
+// ======= DISPLAY FUNCTIONS =======
 void DisplayIntroScreen(void) {
   tft.fillScreen(ILI9341_BLUE);
   DrawIntroFrame();
-
   u8g2gfx.setFont(u8g2_font_helvB24_te);
   u8g2gfx.setForegroundColor(GOLD2);
   int textWidth = u8g2gfx.getUTF8Width("Dr. Royal Rife");
@@ -311,9 +290,7 @@ void DisplayIntroScreen(void) {
   textWidth = u8g2gfx.getUTF8Width("Healing Machine");
   u8g2gfx.setCursor((320 - textWidth) / 2, 120);
   u8g2gfx.print("Healing Machine");
-
   DrawGoldenCrown(160, 135);
-
   u8g2gfx.setFont(u8g2_font_7x14_tr);
   u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
   textWidth = u8g2gfx.getUTF8Width("by kd2cmo 2026");
@@ -326,7 +303,7 @@ void DisplayIntroScreen(void) {
 
 void DrawTitleBar() {
   tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
-  u8g2gfx.setFont(u8g2_font_t0_22b_tf); //u8g2_font_helvB14_te
+  u8g2gfx.setFont(u8g2_font_t0_22b_tf);
   u8g2gfx.setBackgroundColor(ILI9341_BLUE);
   u8g2gfx.setForegroundColor(ILI9341_YELLOW);
   int titleWidth = u8g2gfx.getUTF8Width(titleLine);
@@ -345,7 +322,6 @@ void DrawBattery() {
   u8g2gfx.print(s.c_str());
 }
 
-// ======= OTHER FUNCTIONS (unchanged) =======
 byte CalulatePageOffset(byte item) {
   return ((item - 1) / ITEMS_PER_PAGE) * ITEMS_PER_PAGE;
 }
@@ -353,22 +329,19 @@ byte CalulatePageOffset(byte item) {
 void SetSelectedItem(byte item) {
   selectedItem = item;
   pageOffset = CalulatePageOffset(item);
-  prevSelectedItem = item;  // sync
-  DrawList(); // full list on set
+  prevSelectedItem = item;
+  DrawList();
 }
 
-// 
 void DisplayTreatInProgressScreen(String frequency, String seq) {
   tft.fillScreen(ILI9341_BLACK);
   DrawTitleBar();
   DrawBattery();
-  // Static labels
-  u8g2gfx.setFont(u8g2_font_fub20_tr); //u8g2_font_9x15B_tf
+  u8g2gfx.setFont(u8g2_font_fub20_tr);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   u8g2gfx.setForegroundColor(ILI9341_WHITE);
   u8g2gfx.setCursor(55, 70);
   u8g2gfx.print("Remaining Time:");
-  //
   if (strlen(strComplete) == 0 && frequency.length() > 0) {
     String line = "Sequence: " + seq + "   Frequency: " + frequency + " Hz";
     u8g2gfx.setFont(u8g2_font_helvB14_te);
@@ -378,7 +351,6 @@ void DisplayTreatInProgressScreen(String frequency, String seq) {
     u8g2gfx.setCursor((320 - textWidth) / 2, 210);
     u8g2gfx.print(line.c_str());
   }
-  //
   if (strlen(strComplete) > 0) {
     u8g2gfx.setFont(u8g2_font_helvB24_te);
     u8g2gfx.setBackgroundColor(ILI9341_BLACK);
@@ -387,61 +359,97 @@ void DisplayTreatInProgressScreen(String frequency, String seq) {
     u8g2gfx.setCursor((320 - textWidth) / 2, 190);
     u8g2gfx.print(strComplete);
   }
-  // Initial countdown (will be updated in loop)
-  UpdateCountdown(0);
+  UpdateCountdown(0);   // initial draw (all digits)
 }
 
-// COUNTDOWN
+// ====== SMART COUNTDOWN for MINIMAL FLICKER ==========
 void UpdateCountdown(unsigned long elapsedMs) {
   static unsigned long lastUpdate = 0;
-  // calc time in milliseconds
+  //
   unsigned long totalMs = atoi(treatmentTime) * 60000UL;
   unsigned long remainingMs = (elapsedMs >= totalMs) ? 0 : totalMs - elapsedMs;
-  // calc minutes/seconds to display
   int minLeft = remainingMs / 60000UL;
   int secLeft = (remainingMs % 60000UL) / 1000;
   //
   char buf[6];
   sprintf(buf, "%02d:%02d", minLeft, secLeft);
-  u8g2gfx.setFont(u8g2_font_fub42_tf);          // large size  u8g2_font_helvB24_te
+  // Prepare large font once per call
+  u8g2gfx.setFont(u8g2_font_fub42_tf);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-  u8g2gfx.setForegroundColor(ILI9341_MAGENTA); //ILI9341_YELLOW
-  int textWidth = u8g2gfx.getUTF8Width(buf);
-  // Clear only the countdown area (prevents flicker)
-  tft.fillRect(88, 96, textWidth+5, 45, ILI9341_BLACK);
-  u8g2gfx.setCursor(160 - textWidth / 2, 140);           // centered in the right area
-  u8g2gfx.print(buf);
+  u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
+  // === ONE-TIME CALCULATION OF FIXED SLOT POSITIONS (digit slots use max width) ===
+  static bool positionsCalculated = false;
+  static int  charX[5];
+  static int  charW[5];
+  if (!positionsCalculated) {
+    positionsCalculated = true;
+    // Find widest digit (handles any proportional font safely)
+    int maxDigitW = 0;
+    for (char c = '0'; c <= '9'; c++) {
+      char tmp[2] = {c, 0};
+      int w = u8g2gfx.getUTF8Width(tmp);
+      if (w > maxDigitW) maxDigitW = w;
+    }
+    int colonW = u8g2gfx.getUTF8Width(":");
+    // Total width of the whole "MM:SS" (4 digit slots + colon slot)
+    int totalW = maxDigitW * 4 + colonW;
+    int startX = 160 - totalW / 2;   // center at x=160 (same logic as original)
+    // Build fixed slots (left-to-right)
+    int cx = startX;
+    charX[0] = cx; charW[0] = maxDigitW; cx += maxDigitW;  // tens of minutes
+    charX[1] = cx; charW[1] = maxDigitW; cx += maxDigitW;  // units of minutes
+    charX[2] = cx; charW[2] = colonW;    cx += colonW;     // colon
+    charX[3] = cx; charW[3] = maxDigitW; cx += maxDigitW;  // tens of seconds
+    charX[4] = cx; charW[4] = maxDigitW;                   // units of seconds
+  }
+  // === SMART UPDATE: only redraw digits that actually changed ===
+  static bool firstDraw = true;
+  static char prevBuf[6] = "99:99";
+  //
+  for (int i = 0; i < 5; i++) {
+    if (firstDraw || buf[i] != prevBuf[i]) {
+      // 1. Clear only this character slot (no full-area black flash)
+      tft.fillRect(charX[i], 96, charW[i], 45, ILI9341_BLACK);
+      // 2. Center the new character inside its slot (handles different widths)
+      char tmp[2] = {buf[i], 0};
+      int actualW = u8g2gfx.getUTF8Width(tmp);
+      int offset = (charW[i] - actualW) / 2;
+      //
+      u8g2gfx.setCursor(charX[i] + offset, 140);
+      u8g2gfx.print(tmp);
+    }
+  }
 
+  // Remember for next call
+  for (int i = 0; i < 6; i++) prevBuf[i] = buf[i];
+  firstDraw = false;
   lastUpdate = millis();
 }
 
-// Replace your GenerateFrequency with this version (only countdown update added)
+//
 bool GenerateFrequency() {
   int numFreq = 0;
   for (int i = 0; i < 10; i++) {
     if (frequencies[10 * (selectedItem - 1) + i] > 0) numFreq++;
   }
-  //
   if (numFreq == 0) return false;
-  //
+
   unsigned long fragmentMs = (atoi(treatmentTime) * 60000UL) / numFreq;
   unsigned long sessionStart = millis();
-  //
+
   gen.EnableOutput(true);
   strComplete = (char*)"";
-  //
   unsigned long lastSecond = 0;
-  //
+
   for (int i = 0; i < numFreq; i++) {
     unsigned long freqStart = millis();
     intFreqToGenerate = frequencies[10 * (selectedItem - 1) + i];
     String freqStr = String(intFreqToGenerate);
     String seqStr  = String(i + 1);
-    //
+
     DisplayTreatInProgressScreen(freqStr, seqStr);
-    //
     gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
-    //
+
     while ((millis() - freqStart) < fragmentMs && isGeneratingFrequency) {
       if (btnEnterPressed) {
         gen.EnableOutput(false);
@@ -456,31 +464,28 @@ bool GenerateFrequency() {
     }
     PlayTone(ONE_BEEP);
   }
-  //
+
   gen.EnableOutput(false);
   isGeneratingFrequency = false;
-  //
   strComplete = (char*)"Finished!";
   PlayTone(THREE_BEEPS);
-  //
+
   DisplayTreatInProgressScreen("", "");
-  UpdateCountdown(atoi(treatmentTime) * 60000UL);  // show 00:00
-  //
+  UpdateCountdown(atoi(treatmentTime) * 60000UL);
   delay(3000);
-  //
+
   titleLine = (char*)"DIAGNOSES:";
   DrawTitleBar();
   DrawBattery();
   DrawList();
-  //
+
   strComplete = (char*)"";
   digitalWrite(pinShutdown1, LOW);
   digitalWrite(pinShutdown2, HIGH);
-  //
+
   return false;
 }
 
-//
 void ProcessButtonClick() {
   if (!isGeneratingFrequency) {
     EEPROM.update(eepromAddress, selectedItem);
@@ -497,7 +502,7 @@ void ProcessButtonClick() {
       DrawBattery();
     }
   } else {
-    btnEnterPressed = true;  // signal abort
+    btnEnterPressed = true;
   }
 }
 
@@ -514,57 +519,31 @@ void OnScrollChange() {
   encoderMoved = true;
 }
 
-// Buxtronix/Oleg Mazurov algorithm 
 int8_t AnalyzeEncoderChange() {
-    encoderMoved = false;
-    static uint8_t prev_AB = 0b00000011;  // initial state (both high = detent)
-    static int8_t  encoderVal = 0;
-    // Read current A/B states (CW = pinEncoderCW, CCW = pinEncoderCCW)
-    uint8_t A = digitalRead(pinEncoderCW);
-    uint8_t B = digitalRead(pinEncoderCCW);
-    uint8_t current_AB = (A << 1) | B;     // 00, 01, 10, 11
-    // Shift in new state (now 4-bit: old AB + new AB)
-    uint8_t transition = (prev_AB << 2) | current_AB;
-    // Standard 4-state quadrature lookup table (very forgiving for bounce)
-    static const int8_t deltaTable[16] = {
-        0,   // 0000 - invalid/stable
-       -1,   // 0001 - CCW
-        1,   // 0010 - CW
-        0,   // 0011 - invalid
-        1,   // 0100 - CW
-        0,   // 0101 - invalid
-        0,   // 0110 - invalid
-       -1,   // 0111 - CCW
-       -1,   // 1000 - CCW
-        0,   // 1001 - invalid
-        0,   // 1010 - invalid
-        1,   // 1011 - CW
-        0,   // 1100 - invalid
-        1,   // 1101 - CW
-       -1,   // 1110 - CCW
-        0    // 1111 - stable
-    };
-    //
-    int8_t delta = deltaTable[transition];
-    encoderVal += delta;
-    int8_t result = 0;
-    // Full-step mode: trigger only on complete detent (most reliable, no skipping)
-    if (encoderVal <= -4) { result = -1; encoderVal = 0; }
-    if (encoderVal >=  4) { result =  1; encoderVal = 0; }
-    // ── Optional: half-step mode (twice as sensitive, can feel "faster")
-    if (encoderVal <= -2) { result = -1; encoderVal += 2; }
-    if (encoderVal >=  2) { result =  1; encoderVal -= 2; }
-    prev_AB = current_AB;
-    // Keep your debug print if you want
-    if (result != 0) {
-      debug("Step: "); debug(result);
-      debug("  AB: "); debug(current_AB);  //, BIN);
-      debug("  encVal: "); debugln(encoderVal);
-    }
-    return result;
+  encoderMoved = false;
+  static uint8_t prev_AB = 0b00000011;
+  static int8_t  encoderVal = 0;
+  uint8_t A = digitalRead(pinEncoderCW);
+  uint8_t B = digitalRead(pinEncoderCCW);
+  uint8_t current_AB = (A << 1) | B;
+  uint8_t transition = (prev_AB << 2) | current_AB;
+  static const int8_t deltaTable[16] = {0,-1,1,0,1,0,0,-1,-1,0,0,1,0,1,-1,0};
+  int8_t delta = deltaTable[transition];
+  encoderVal += delta;
+  int8_t result = 0;
+  if (encoderVal <= -4) { result = -1; encoderVal = 0; }
+  if (encoderVal >=  4) { result =  1; encoderVal = 0; }
+  if (encoderVal <= -2) { result = -1; encoderVal += 2; }
+  if (encoderVal >=  2) { result =  1; encoderVal -= 2; }
+  prev_AB = current_AB;
+  if (result != 0) {
+    debug("Step: "); debug(result);
+    debug("  AB: "); debug(current_AB);
+    debug("  encVal: "); debugln(encoderVal);
+  }
+  return result;
 }
 
-// ===== BUTTON original working logic ===========
 void OnButtonPress() {
   int buttonState;
   static int lastButtonStatus = HIGH;
@@ -583,12 +562,12 @@ void OnButtonPress() {
   boolean buttonStateChange = (buttonState != lastButtonStatus);
   boolean buttonReleased = (buttonStateChange && (buttonState == HIGH));
   lastButtonStatus = buttonState;
-  //
+
   if (!buttonStateChange) {
        buttonOutput = STATE_NORMAL | buttonOutput;
        return;
   }
-  //
+
   if (timeoutLong && buttonReleased) {
       buttonOutput = STATE_LONG | buttonOutput;
       btnEnterPressed = true;
@@ -601,99 +580,66 @@ void OnButtonPress() {
   }
 }
 
-// INTRO
 void DrawIntroFrame() {
-  tft.fillRoundRect(FRAME_X, FRAME_Y, FRAME_W, FRAME_H, 24, GOLD1);             // Outer thick gold border
-  tft.drawRoundRect(FRAME_X+5, FRAME_Y+5, FRAME_W-10, FRAME_H-10, 18, GOLD3);   // Inner shadow
-  tft.drawRoundRect(FRAME_X+12, FRAME_Y+12, FRAME_W-24, FRAME_H-24, 12, GOLD4); // Inner highlight
-  // Ornamental corners (simple curls)
+  tft.fillRoundRect(FRAME_X, FRAME_Y, FRAME_W, FRAME_H, 24, GOLD1);
+  tft.drawRoundRect(FRAME_X+5, FRAME_Y+5, FRAME_W-10, FRAME_H-10, 18, GOLD3);
+  tft.drawRoundRect(FRAME_X+12, FRAME_Y+12, FRAME_W-24, FRAME_H-24, 12, GOLD4);
   for (int i = 0; i < 20; i++) {
     tft.drawPixel(FRAME_X+12+i, FRAME_Y+12+sin(i*0.4)*8, GOLD2);
     tft.drawPixel(FRAME_X+FRAME_W-12-i, FRAME_Y+12+sin(i*0.4)*8, GOLD2);
     tft.drawPixel(FRAME_X+12+i, FRAME_Y+FRAME_H-12-sin(i*0.4)*8, GOLD2);
     tft.drawPixel(FRAME_X+FRAME_W-12-i, FRAME_Y+FRAME_H-12-sin(i*0.4)*8, GOLD2);
   }
-  tft.fillRoundRect(FRAME_X+20, FRAME_Y+20, FRAME_W-40, FRAME_H-40, 8, ILI9341_BLACK); // Inner background
+  tft.fillRoundRect(FRAME_X+20, FRAME_Y+20, FRAME_W-40, FRAME_H-40, 8, ILI9341_BLACK);
 }
 
-// INTRO
 void DrawGoldenCrown(int cx, int topY) {
-  // Fixed dimensions for a smaller, elegant crown
-  const int w = 52;          // width of crown
-  const int h = 28;          // total height (base + peaks)
-  const int baseH = 8;       // height of the base band
-
-  int x0 = cx - w / 2;        // left edge
-  int y0 = topY;               // top of crown (lowest point is y0+h)
-
-  // ------------------- BASE BAND -------------------
+  const int w = 52;
+  const int h = 28;
+  const int baseH = 8;
+  int x0 = cx - w / 2;
+  int y0 = topY;
   tft.fillRoundRect(x0, y0 + h - baseH, w, baseH, baseH / 3, GOLD3);
   tft.drawRoundRect(x0, y0 + h - baseH, w, baseH, baseH / 3, GOLD1);
-  tft.drawFastHLine(x0 + 3, y0 + h - baseH, w - 6, GOLD4);     // top highlight
-  tft.drawFastHLine(x0 + 2, y0 + h - 1, w - 4, GOLD2);         // bottom shadow
-
-  // Decorative "gems" on the base (small gold circles)
+  tft.drawFastHLine(x0 + 3, y0 + h - baseH, w - 6, GOLD4);
+  tft.drawFastHLine(x0 + 2, y0 + h - 1, w - 4, GOLD2);
   for (int i = 0; i < 5; i++) {
     int gemX = x0 + w * (i + 1) / 6;
     int gemY = y0 + h - baseH / 2;
     tft.fillCircle(gemX, gemY, baseH / 3, GOLD1);
     tft.drawCircle(gemX, gemY, baseH / 3, GOLD4);
   }
-
-  // ------------------- PEAKS -------------------
-  int peakBaseY = y0 + h - baseH;        // where peaks start
+  int peakBaseY = y0 + h - baseH;
   int leftX   = x0 + w / 4;
   int centerX = cx;
   int rightX  = x0 + 3 * w / 4;
-
-  int leftH   = 12;      // height of left peak above base
-  int centerH = 16;      // taller central peak
+  int leftH   = 12;
+  int centerH = 16;
   int rightH  = 12;
-
-  // Left peak (with pearl)
-  tft.fillTriangle(leftX, peakBaseY,
-                   leftX - 6, peakBaseY - leftH,
-                   leftX + 6, peakBaseY - leftH,
-                   GOLD2);
+  tft.fillTriangle(leftX, peakBaseY, leftX - 6, peakBaseY - leftH, leftX + 6, peakBaseY - leftH, GOLD2);
   tft.fillCircle(leftX, peakBaseY - leftH - 2, 3, GOLD4);
   tft.drawCircle(leftX, peakBaseY - leftH - 2, 3, GOLD1);
-
-  // Right peak (with pearl)
-  tft.fillTriangle(rightX, peakBaseY,
-                   rightX - 6, peakBaseY - rightH,
-                   rightX + 6, peakBaseY - rightH,
-                   GOLD2);
+  tft.fillTriangle(rightX, peakBaseY, rightX - 6, peakBaseY - rightH, rightX + 6, peakBaseY - rightH, GOLD2);
   tft.fillCircle(rightX, peakBaseY - rightH - 2, 3, GOLD4);
   tft.drawCircle(rightX, peakBaseY - rightH - 2, 3, GOLD1);
-
-  // Center peak (tallest, with a small cross)
-  tft.fillTriangle(centerX, peakBaseY,
-                   centerX - 8, peakBaseY - centerH,
-                   centerX + 8, peakBaseY - centerH,
-                   GOLD1);
+  tft.fillTriangle(centerX, peakBaseY, centerX - 8, peakBaseY - centerH, centerX + 8, peakBaseY - centerH, GOLD1);
   int crossX = centerX;
   int crossY = peakBaseY - centerH - 3;
   tft.drawLine(crossX, crossY - 3, crossX, crossY + 3, GOLD4);
   tft.drawLine(crossX - 3, crossY, crossX + 3, crossY, GOLD4);
   tft.fillCircle(crossX, crossY, 2, GOLD3);
-
-  // ------------------- ARCHES -------------------
-  // Left arch
   for (int i = 0; i <= 12; i++) {
     float t = i / 12.0;
     int x = leftX + t * (centerX - leftX);
     int y = peakBaseY - leftH * (1 - t) - centerH * t + 4 * sin(t * PI);
     tft.drawPixel(x, y, GOLD2);
   }
-  // Right arch
   for (int i = 0; i <= 12; i++) {
     float t = i / 12.0;
     int x = centerX + t * (rightX - centerX);
     int y = peakBaseY - centerH * (1 - t) - rightH * t + 4 * sin(t * PI);
     tft.drawPixel(x, y, GOLD2);
   }
-
-  // -------- EXTRA SPARKLES -----------
   tft.drawPixel(leftX - 3, peakBaseY - leftH / 2, GOLD4);
   tft.drawPixel(rightX + 3, peakBaseY - rightH / 2, GOLD4);
   tft.drawPixel(centerX, peakBaseY - centerH + 2, GOLD4);
@@ -713,4 +659,3 @@ void PlayTone(int n) {
     delay(PEIZO_BEEP_PAUSE);
   }
 }
-
