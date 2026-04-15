@@ -1,3 +1,4 @@
+// Added signal type indicator sin/square
 #include <EEPROM.h>
 #include <AD9833.h>    // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <SPI.h>
@@ -121,6 +122,7 @@ char* strComplete     = (char*)"";
 
 bool isGeneratingFrequency = false;
 uint16_t intFreqToGenerate = 0;
+bool isSineWave            = false;   // false = Square, true = Sine
 
 volatile bool encoderMoved    = false;
 volatile bool btnEnterPressed = false;
@@ -133,8 +135,8 @@ long DEBOUNCE_DELTA = 30UL;
 byte eepromAddress = 0;
 
 // Frame dimensions for color horiz 320x240
-const int FRAME_X = 2;
-const int FRAME_Y = 2;
+const int FRAME_X =   2;
+const int FRAME_Y =   2;
 const int FRAME_W = 316;
 const int FRAME_H = 236;
 
@@ -146,17 +148,10 @@ const int TEXT_Y_OFFSET  = 18;
 // title
 const int TITLE_BAR_HIGHT = 30;
 
-// Progress Circle
-const int CIRCLE_CENTER_X = 255;
-const int CIRCLE_CENTER_Y = 125;
-const int OUTER_RADIUS    = 58;
-const int INNER_RADIUS    = 38;
-const int RING_THICKNESS  = 20;
-const int TOTAL_MINUTES   = 20;
-
-static int prevFreqIndex = -1;
-static char prevTimeStr[6] = "99:99";
-static bool treatmentScreenDrawn = false;
+static int  prevFreqIndex        =      -1;
+static char prevTimeStr[6]       = "99:99";
+static char prevAngelZTimeStr[6] = "00:00";  
+static bool treatmentScreenDrawn =   false;
 
 // ==== AngelZ Sequences CLASS =====
 class Sequences {
@@ -188,8 +183,8 @@ float Sequences::GetDelaySequence(int currentPoint, double valueStart, double va
     }
 }
 
-#define ANGELZ_TOTAL_POINTS 48
-const int ANGELZ_SPLIT_POINT = 24;
+#define   ANGELZ_TOTAL_POINTS       48
+const int ANGELZ_SPLIT_POINT      = 24;
 const int ANGELZ_NUMBER_OF_CYCLES = 59;
 
 double angelz_valueStart[ANGELZ_NUMBER_OF_CYCLES] = {
@@ -219,12 +214,12 @@ double angelz_tau[ANGELZ_NUMBER_OF_CYCLES] = {
     5.2, 7.4, 4.0, 5.5, 6.0, 6.5, 5.7, 6.8, 7.1
 };
 
-// --- AngelZ Progress Bar and Countdown State ---
-static int prevAngelZFreqBarIndex = -1;
-static char prevAngelZTimeStr[6] = "00:00";
+// --- AngelZ Progress Bar and тиме сtate ---
+//static int prevAngelZFreqBarIndex = -1;
+//static char prevAngelZTimeStr[6] = "00:00";
 // ==== END of AngelZ Sequences CLASS =====
 
-// ======= SETUP ====================
+// ======= SETUP ========
 void setup() {
   Serial.begin(9600);
   tft.begin();
@@ -258,11 +253,15 @@ void setup() {
   }
 }
 
-// ======= LOOP ====================
+// ======= LOOP ========
 void loop() {
   if (encoderMoved) {
-    int8_t dir = AnalyzeEncoderChange();
-    if (dir != 0) ScrollItem(dir > 0 ? SCROLL_UP : SCROLL_DOWN);
+    int8_t direction = AnalyzeEncoderChange();
+    if (direction != 0) {
+      if (!isGeneratingFrequency) {
+        ScrollItem(direction > 0 ? SCROLL_UP : SCROLL_DOWN);
+      }
+    }
   }
 
   if (btnEnterPressed) {
@@ -272,6 +271,21 @@ void loop() {
     }
     btnEnterPressed = false;
   }
+}
+
+// Type of signal
+void UpdateSignalIndicator() {
+  u8g2gfx.setFont(u8g2_font_t0_22b_tf);
+  u8g2gfx.setBackgroundColor(ILI9341_BLUE);
+  
+  // Clear the right portion of title bar first
+  tft.fillRect(260, 0, 60, TITLE_BAR_HIGHT, ILI9341_BLUE);
+  
+  u8g2gfx.setForegroundColor(ILI9341_WHITE);
+  const char* sigStr = isSineWave ? "SIN" : "_||_";
+  int sigWidth = u8g2gfx.getUTF8Width(sigStr);
+  u8g2gfx.setCursor(320 - sigWidth - 4, 24);
+  u8g2gfx.print(sigStr);
 }
 
 // ======= ANGELZ PROGRESS BAR & COUNTDOWN FUNCTION =======
@@ -416,34 +430,6 @@ void SetSelectedItem(byte item) {
   DrawList();
 }
 
-void DisplayTreatInProgressScreen_old(String frequency, String seq) {
-  tft.fillScreen(ILI9341_BLACK);
-  DrawTitleBar();
-  DrawBattery();
-  u8g2gfx.setFont(u8g2_font_fub20_tr);
-  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-  u8g2gfx.setForegroundColor(ILI9341_WHITE);
-  u8g2gfx.setCursor(55, 70);
-  u8g2gfx.print("Remaining Time:");
-  if (strlen(strComplete) == 0 && frequency.length() > 0) {
-    String line = "Sequence: " + seq + "   Frequency: " + frequency + " Hz";
-    u8g2gfx.setFont(u8g2_font_helvB14_te);
-    u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-    u8g2gfx.setForegroundColor(ILI9341_GREEN);
-    int textWidth = u8g2gfx.getUTF8Width(line.c_str());
-    u8g2gfx.setCursor((320 - textWidth) / 2, 210);
-    u8g2gfx.print(line.c_str());
-  }
-  if (strlen(strComplete) > 0) {
-    u8g2gfx.setFont(u8g2_font_helvB24_te);
-    u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-    u8g2gfx.setForegroundColor(ILI9341_RED);
-    int textWidth = u8g2gfx.getUTF8Width(strComplete);
-    u8g2gfx.setCursor((320 - textWidth) / 2, 190);
-    u8g2gfx.print(strComplete);
-  }
-}
-
 // DisplayTreatInProgressScreen
 void DisplayTreatInProgressScreen( int currentFreqIndex, int selectedItem,  unsigned long msLeft, bool forceFull = false) {
   // --- Layout constants ---
@@ -470,6 +456,16 @@ void DisplayTreatInProgressScreen( int currentFreqIndex, int selectedItem,  unsi
     int titleWidth = u8g2gfx.getUTF8Width(titleLine);
     u8g2gfx.setCursor((SCREEN_W - titleWidth) / 2, 24);
     u8g2gfx.print(titleLine);
+
+    // Signal type indicator - top right of title bar
+    u8g2gfx.setFont(u8g2_font_t0_22b_tf);
+    u8g2gfx.setBackgroundColor(ILI9341_BLUE);
+    u8g2gfx.setForegroundColor(ILI9341_YELLOW);
+    const char* sigStr = isSineWave ? "SIN" : "_||_";
+    int sigWidth = u8g2gfx.getUTF8Width(sigStr);
+    u8g2gfx.setCursor(320 - sigWidth - 4, 24);
+    u8g2gfx.print(sigStr);
+
 
     // Left 1/3: All bars
     for (int i = 0; i < 10; i++) {
@@ -588,7 +584,7 @@ void DisplayTreatInProgressScreen( int currentFreqIndex, int selectedItem,  unsi
     }
   }
   strcpy(prevTimeStr, buf);
-}
+} 
 
 void DrawList() {
   tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK); 
@@ -629,7 +625,7 @@ void RedrawSelectionOnly() {
   u8g2gfx.print(diagnoses[selectedItem - 1]);
 }
 
-// ======= OPTIMIZED SCROLL HANDLING =======
+// === OPTIMIZED SCROLL HANDLING ====
 void ScrollItem(bool direction) {
   prevSelectedItem = selectedItem;
   if (direction == SCROLL_UP) {
@@ -648,54 +644,6 @@ void ScrollItem(bool direction) {
   }
 }
 
-// ======OPTIMIZED COUNTDOWN (MINIMAL FLICKER) ========
-void UpdateCountdown(unsigned long elapsedMs, bool forceFull = false) {
-  static unsigned long lastUpdate = 0;
-  unsigned long totalMs = atoi(treatmentTime) * 60000UL;
-  unsigned long remainingMs = (elapsedMs >= totalMs) ? 0 : totalMs - elapsedMs;
-  int minLeft = remainingMs / 60000UL;
-  int secLeft = (remainingMs % 60000UL) / 1000;
-  char buf[6];
-  sprintf(buf, "%02d:%02d", minLeft, secLeft);
-  u8g2gfx.setFont(u8g2_font_fub42_tf);
-  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-  u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
-  static bool positionsCalculated = false;
-  static int  charX[5];
-  static int  charW[5];
-  if (!positionsCalculated) {
-    positionsCalculated = true;
-    int maxDigitW = 0;
-    for (char c = '0'; c <= '9'; c++) {
-      char tmp[2] = {c, 0};
-      int w = u8g2gfx.getUTF8Width(tmp);
-      if (w > maxDigitW) maxDigitW = w;
-    }
-    int colonW = u8g2gfx.getUTF8Width(":");
-    int totalW = maxDigitW * 4 + colonW;
-    int startX = 160 - totalW / 2;
-    int cx = startX;
-    charX[0] = cx; charW[0] = maxDigitW; cx += maxDigitW;
-    charX[1] = cx; charW[1] = maxDigitW; cx += maxDigitW;
-    charX[2] = cx; charW[2] = colonW;    cx += colonW;
-    charX[3] = cx; charW[3] = maxDigitW; cx += maxDigitW;
-    charX[4] = cx; charW[4] = maxDigitW;
-  }
-  static char prevBuf[6] = "99:99";
-  for (int i = 0; i < 5; i++) {
-    if (forceFull || buf[i] != prevBuf[i]) {
-      tft.fillRect(charX[i], 96, charW[i], 45, ILI9341_BLACK);
-      char tmp[2] = {buf[i], 0};
-      int actualW = u8g2gfx.getUTF8Width(tmp);
-      int offset = (charW[i] - actualW) / 2;
-      u8g2gfx.setCursor(charX[i] + offset, 140);
-      u8g2gfx.print(tmp);
-    }
-  }
-  strcpy(prevBuf, buf);
-  lastUpdate = millis();
-}
-
 byte CalulatePageOffset(byte item) {
   return ((item - 1) / ITEMS_PER_PAGE) * ITEMS_PER_PAGE;
 }
@@ -707,9 +655,9 @@ void OpenAngelZ() {
   u8g2gfx.setBackgroundColor(ILI9341_BLUE);
   u8g2gfx.setForegroundColor(ILI9341_YELLOW);
   tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
-  int titleWidth = u8g2gfx.getUTF8Width("Angel Z session");
+  int titleWidth = u8g2gfx.getUTF8Width("Angel-Z session");
   u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
-  u8g2gfx.print("Angel Z session");
+  u8g2gfx.print("Angel-Z session");
 
   Sequences sequences(&gen);
 
@@ -719,6 +667,7 @@ void OpenAngelZ() {
   for (int cycleNumber = 0; cycleNumber < ANGELZ_NUMBER_OF_CYCLES; ++cycleNumber) {
     for (int pointNumber = 0; pointNumber < ANGELZ_TOTAL_POINTS; ++pointNumber) {
       sessionDuration += (unsigned long)sequences.GetDelaySequence(pointNumber, angelz_valueStart[cycleNumber], angelz_valueMax[cycleNumber], angelz_tau[cycleNumber], ANGELZ_SPLIT_POINT) + 3;
+      debugln(sessionDuration);
     }
   }
 
@@ -757,104 +706,7 @@ void OpenAngelZ() {
   DrawList();
 }
 
-void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msElapsed, unsigned long sessionDuration, bool forceFull = false) {
-  // --- Title Bar ---
-  static bool titleDrawn = false;
-  if (forceFull || !titleDrawn) {
-    tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
-    u8g2gfx.setFont(u8g2_font_t0_22b_tf);
-    u8g2gfx.setBackgroundColor(ILI9341_BLUE);
-    u8g2gfx.setForegroundColor(ILI9341_YELLOW);
-    int titleWidth = u8g2gfx.getUTF8Width("Angel Z session");
-    u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
-    u8g2gfx.print("Angel Z session");
-    titleDrawn = true;
-  }
-
-  // --- Frequency Bar (24 rectangles, 16px high) ---
-  const int BAR_X = 16;
-  const int BAR_Y = 222;
-  const int RECT_W = 12;
-  const int RECT_H = 16;
-  const int NUM_RECTS = 24;
-
-  static int prevBarIndex = -1;
-  if (forceFull || prevBarIndex != freqBarIndex) {
-    int from = 0, to = NUM_RECTS - 1;
-    if (!forceFull && prevBarIndex != -1) {
-      from = min(prevBarIndex, freqBarIndex);
-      to   = max(prevBarIndex, freqBarIndex);
-    }
-    for (int i = from; i <= to; i++) {
-      int x = BAR_X + i * RECT_W;
-      uint16_t color;
-      if (i <= freqBarIndex) {
-        color = (i < 12) ? ILI9341_GREEN : ILI9341_BLUE;
-      } else {
-        color = ILI9341_DARKGREY;
-      }
-      tft.fillRect(x, BAR_Y, RECT_W - 2, RECT_H, color);
-    }
-    prevBarIndex = freqBarIndex;
-  }
-
-  // --- "Time" label and elapsed time in center ---
-  u8g2gfx.setFont(u8g2_font_helvB24_te);
-  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-  u8g2gfx.setForegroundColor(ILI9341_WHITE);
-  int labelWidth = u8g2gfx.getUTF8Width("Time");
-  u8g2gfx.setCursor((320 - labelWidth) / 2, 90);
-  tft.fillRect((320 - labelWidth) / 2, 60, labelWidth, 32, ILI9341_BLACK); // clear area
-  u8g2gfx.print("Time");
-
-  // Elapsed time (count up)
-  unsigned long secondsElapsed = msElapsed / 1000;
-  int minElapsed = secondsElapsed / 60;
-  int secElapsed = secondsElapsed % 60;
-  char buf[6];
-  sprintf(buf, "%02d:%02d", minElapsed, secElapsed);
-
-  // Only redraw digits that change (or forceFull)
-  u8g2gfx.setFont(u8g2_font_fub42_tf);
-  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-  u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
-
-  static bool positionsCalculated = false;
-  static int  charX[5];
-  static int  charW[5];
-  static char prevAngelZTimeStr[6] = "99:99";
-  if (!positionsCalculated) {
-    positionsCalculated = true;
-    int maxDigitW = 0;
-    for (char c = '0'; c <= '9'; c++) {
-      char tmp[2] = {c, 0};
-      int w = u8g2gfx.getUTF8Width(tmp);
-      if (w > maxDigitW) maxDigitW = w;
-    }
-    int colonW = u8g2gfx.getUTF8Width(":");
-    int totalW = maxDigitW * 4 + colonW;
-    int startX = 160 - totalW / 2;
-    int cx = startX;
-    charX[0] = cx; charW[0] = maxDigitW; cx += maxDigitW;
-    charX[1] = cx; charW[1] = maxDigitW; cx += maxDigitW;
-    charX[2] = cx; charW[2] = colonW;    cx += colonW;
-    charX[3] = cx; charW[3] = maxDigitW; cx += maxDigitW;
-    charX[4] = cx; charW[4] = maxDigitW;
-  }
-  for (int i = 0; i < 5; i++) {
-    if (forceFull || buf[i] != prevAngelZTimeStr[i]) {
-      tft.fillRect(charX[i], 110, charW[i], 45, ILI9341_BLACK);
-      char tmp[2] = {buf[i], 0};
-      int actualW = u8g2gfx.getUTF8Width(tmp);
-      int offset = (charW[i] - actualW) / 2;
-      u8g2gfx.setCursor(charX[i] + offset, 150);
-      u8g2gfx.print(tmp);
-    }
-  }
-  strcpy(prevAngelZTimeStr, buf);
-}
-
-// ======= MODIFIED ProcessButtonClick() =======
+// ===ProcessButtonClick() ===
 void ProcessButtonClick() {
   if (!isGeneratingFrequency) {
     EEPROM.update(eepromAddress, selectedItem);
@@ -889,69 +741,7 @@ void ProcessButtonClick() {
   }
 }
 
-/*
-bool GenerateFrequency_old() {
-  int numFreq = 0;
-  for (int i = 0; i < 10; i++) {
-    if (frequencies[10 * (selectedItem - 1) + i] > 0) numFreq++;
-  }
-  if (numFreq == 0) return false;
-
-  unsigned long fragmentMs = (atoi(treatmentTime) * 60000UL) / numFreq;
-  unsigned long sessionStart = millis();
-
-  gen.EnableOutput(true);
-  strComplete = (char*)"";
-  unsigned long lastSecond = 0;
-
-  for (int i = 0; i < numFreq; i++) {
-    unsigned long freqStart = millis();
-    intFreqToGenerate = frequencies[10 * (selectedItem - 1) + i];
-    String freqStr = String(intFreqToGenerate);
-    String seqStr  = String(i + 1);
-
-    DisplayTreatInProgressScreen(freqStr, seqStr);
-    UpdateCountdown(millis() - sessionStart, true);
-
-    gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
-
-    while ((millis() - freqStart) < fragmentMs && isGeneratingFrequency) {
-      if (btnEnterPressed) {
-        gen.EnableOutput(false);
-        return true;
-      }
-      unsigned long now = millis();
-      if (now - lastSecond >= 1000) {
-        unsigned long elapsed = now - sessionStart;
-        UpdateCountdown(elapsed);
-        lastSecond = now;
-      }
-    }
-    PlayTone(ONE_BEEP);
-  }
-
-  gen.EnableOutput(false);
-  isGeneratingFrequency = false;
-  strComplete = (char*)"Finished!";
-  PlayTone(THREE_BEEPS);
-
-  DisplayTreatInProgressScreen("", "");
-  UpdateCountdown(atoi(treatmentTime) * 60000UL, true);
-  delay(3000);
-
-  titleLine = (char*)"DIAGNOSES:";
-  DrawTitleBar();
-  DrawBattery();
-  DrawList();
-
-  strComplete = (char*)"";
-  digitalWrite(pinShutdown1, LOW);
-  digitalWrite(pinShutdown2, HIGH);
-
-  return false;
-} */
-
-// ----------- Flicker-Free GenerateFrequency -----------
+// --- Flicker-Free GenerateFrequency ----
 bool GenerateFrequency() {
   int numFreq = 0;
   int freqIndices[10];
@@ -971,35 +761,49 @@ bool GenerateFrequency() {
   strComplete = (char*)"";
   unsigned long lastSecond = 0;
   prevFreqIndex = -1;
-  treatmentScreenDrawn = false; // force full redraw at start
-
+  treatmentScreenDrawn = false;
+  //
   for (int i = 0; i < numFreq; i++) {
     unsigned long freqStart = millis();
     intFreqToGenerate = frequencies[10 * (selectedItem - 1) + freqIndices[i]];
 
-    // Show all 10 frequencies, highlight the current one
     unsigned long elapsed = millis() - sessionStart;
     unsigned long msLeft = (elapsed < totalSessionMs) ? (totalSessionMs - elapsed) : 0;
-    DisplayTreatInProgressScreen(
-      freqIndices[i], selectedItem, msLeft, !treatmentScreenDrawn
-    );
+    DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft, !treatmentScreenDrawn);
     treatmentScreenDrawn = true;
-
-    gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
-
+    UpdateSignalIndicator();
+    //
+    gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE, REG0, intFreqToGenerate);
+    //
     unsigned long fragmentMs = totalSessionMs / numFreq;
     while ((millis() - freqStart) < fragmentMs && isGeneratingFrequency) {
       if (btnEnterPressed) {
         gen.EnableOutput(false);
+        isSineWave = false;
         return true;
       }
+
+      // encoder handled inside while loop to update signal Type
+      if (encoderMoved) {
+        int8_t dir = AnalyzeEncoderChange();
+        if (dir > 0 && !isSineWave) {
+          isSineWave = true;
+          gen.ApplySignal(SINE_WAVE, REG0, intFreqToGenerate);
+          UpdateSignalIndicator();
+        } else if (dir < 0 && isSineWave) {
+          isSineWave = false;
+          gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
+          UpdateSignalIndicator();
+        }
+      }
+      //
       unsigned long now = millis();
       if (now - lastSecond >= 1000) {
         unsigned long elapsed = now - sessionStart;
         unsigned long msLeft = (elapsed < totalSessionMs) ? (totalSessionMs - elapsed) : 0;
-        DisplayTreatInProgressScreen(
-          freqIndices[i], selectedItem, msLeft, false
-        );
+        DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft, false);
+        // Keep signal indicator visible after every countdown update
+        UpdateSignalIndicator();
         lastSecond = now;
       }
     }
@@ -1009,10 +813,10 @@ bool GenerateFrequency() {
 
   gen.EnableOutput(false);
   isGeneratingFrequency = false;
+  isSineWave = false;
   strComplete = (char*)"Finished!";
   PlayTone(3);
 
-  // Show finished screen for 3 seconds
   tft.fillScreen(ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_helvB24_te);
   u8g2gfx.setForegroundColor(ILI9341_GREEN);
@@ -1022,10 +826,6 @@ bool GenerateFrequency() {
   delay(3000);
 
   titleLine = (char*)"DIAGNOSES:";
-  // Call your menu redraw functions here
-  // DrawTitleBar();
-  // DrawBattery();
-  // DrawList();
 
   strComplete = (char*)"";
   digitalWrite(pinShutdown1, LOW);
@@ -1065,8 +865,8 @@ int8_t AnalyzeEncoderChange() {
   if (encoderVal >=  2) { result =  1; encoderVal -= 2; }
   prev_AB = current_AB;
   if (result != 0) {
-    debug("Step: "); debug(result);
-    debug("  AB: "); debug(current_AB);
+    debug("Step: ");     debug(result);
+    debug("  AB: ");     debug(current_AB);
     debug("  encVal: "); debugln(encoderVal);
   }
   return result;
