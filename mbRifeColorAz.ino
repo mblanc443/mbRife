@@ -1,3 +1,6 @@
+// Uses Adafruit_ILI9341 + U8g2_for_Adafruit_GFX for Cyrillic
+// Arduino Mega2560 + 2.8" 320x240 TFT (ILI9341)
+// Optimized partial redraw for fast scrolling, countdown and remaining time
 // Added signal type indicator sin/square
 #include <EEPROM.h>
 #include <AD9833.h>    // https://github.com/Billwilliams1952/AD9833-Library-Arduino
@@ -49,17 +52,27 @@ const float R2 = 8000.0;
 const float referenceVoltage = 5.0;
 
 // Diagnoses - English version
-const char* diagnoses[] = {
-  "Good Sleep","Alcoholism","Angina","Stomachache","General Pain","Headaches",
-  "Infection","Acute pain","Back pain","Arthralgia","Toothache",
-  "No appetite","No taste","Motion sickness", "Hoarseness","Gastric Ulcer",
-  "Prostate ailments","Deafness","Flu","Hemorrhoids","Kidney stones",
-  "Cough","Runny nose","Hair loss","Hypertension","Low pressure",
-  "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
-  "Dizziness","Accending 1","Accending 2", "H.Clark Zapper",
-  "AngelZ" // <-- AngelZ added here
-};
+//const char* diagnoses[] = {
+//  "Good Sleep","Alcoholism","Angina","Stomachache","General Pain","Headaches",
+//  "Infection","Acute pain","Back pain","Arthralgia","Toothache",
+//  "No appetite","No taste","Motion sickness", "Hoarseness","Gastric Ulcer",
+//  "Prostate ailments","Deafness","Flu","Hemorrhoids","Kidney stones",
+//  "Cough","Runny nose","Hair loss","Hypertension","Low pressure",
+//  "Thyroid Gland Disease","Bad breath","Herpes", "Epilepsy","Constipation",
+//  "Dizziness","Accending 1","Accending 2", "H.Clark Zapper",
+//  "AngelZ" // <-- AngelZ added here
+//};
 
+// Cyrillic version
+const char* diagnoses[] = {
+ "Хороший сон","Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
+  "Инфекция","Острая боль","Боль в спине","Артралгия","Зубная боль",
+  "Нет аппетита","Нет вкуса","Морская болезнь","Охриплость","Язва желудка",
+  "Недуги простаты","Глухота","Грипп","Геморой","Камни в почках",
+  "Кашель","Насморк","Потеря волос","Высокое давление","Низкое давление",
+  "Недуги Щитовидной","Запах изо рта","Герпес","Эпилепсия","Запоры",
+  "Головокружение","Вознесение 1","Вознесение 2","H.Clark Zapper", "Angel-Z"
+}; 
 const int frequencies[] = {
   6,5,4,0,0,0,0,0,0,0,
   10000,0,0,0,0,0,0,0,0,0,
