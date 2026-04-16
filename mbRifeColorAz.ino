@@ -803,6 +803,7 @@ bool GenerateFrequency() {
         if (dir > 0 && !isSineWave) {
           isSineWave = true;
           gen.ApplySignal(SINE_WAVE, REG0, intFreqToGenerate);
+          gen.SetOutputSource(REG0);  // make sure output is active
           UpdateSignalIndicator();
         } else if (dir < 0 && isSineWave) {
           isSineWave = false;
