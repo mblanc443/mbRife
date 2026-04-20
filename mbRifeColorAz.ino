@@ -27,12 +27,6 @@
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 U8G2_FOR_ADAFRUIT_GFX u8g2gfx;
 
-// Gold color palette
-#define GOLD1  tft.color565(255, 215, 0)
-#define GOLD2  tft.color565(218, 165, 32)
-#define GOLD3  tft.color565(184, 134, 11)
-#define GOLD4  tft.color565(255, 236, 139)
-
 // AD9833
 #define pinGenCS         9
 AD9833 gen(pinGenCS);
@@ -46,13 +40,19 @@ AD9833 gen(pinGenCS);
 #define pinBtnEnter     21
 #define pinBatteryLevel A0
 
+// Gold color palette
+#define GOLD1  tft.color565(255, 215, 0)
+#define GOLD2  tft.color565(218, 165, 32)
+#define GOLD3  tft.color565(184, 134, 11)
+#define GOLD4  tft.color565(255, 236, 139)
+
 // Battery voltage divider - tune R1/R2 to match your resistors
 const float R1 = 32000.0;
 const float R2 = 8000.0;
 const float referenceVoltage = 5.0;
 
 // Diagnoses - English version
-const char* diagnoses[] = {
+const char* diagnoses_en[] = {
   "Good Sleep","Alcoholism","Angina","Stomachache","General Pain","Headaches",
   "Infection","Acute pain","Back pain","Arthralgia","Toothache",
   "No appetite","No taste","Motion sickness", "Hoarseness","Gastric Ulcer",
@@ -64,7 +64,7 @@ const char* diagnoses[] = {
 };
 
 // Cyrillic version
-/*const char* diagnoses[] = {
+const char* diagnoses[] = {
  "Хороший сон","Алкоголизм","Стенокардия","Желудочная боль","Общая боль","Головная боль",
   "Инфекция","Острая боль","Боль в спине","Артралгия","Зубная боль",
   "Нет аппетита","Нет вкуса","Морская болезнь","Охриплость","Язва желудка",
@@ -72,7 +72,7 @@ const char* diagnoses[] = {
   "Кашель","Насморк","Потеря волос","Высокое давление","Низкое давление",
   "Недуги Щитовидной","Запах изо рта","Герпес","Эпилепсия","Запоры",
   "Головокружение","Вознесение 1","Вознесение 2","H.Clark Zapper", "AngelZ"
-}; */
+}; 
 
 const int frequencies[] = {
   6,5,4,0,0,0,0,0,0,0,
@@ -228,10 +228,6 @@ double angelz_tau[ANGELZ_NUMBER_OF_CYCLES] = {
     5.2, 7.4, 4.0, 5.5, 6.0, 6.5, 5.7, 6.8, 7.1
 };
 
-// --- AngelZ Progress Bar and тиме сtate ---
-//static int prevAngelZFreqBarIndex = -1;
-//static char prevAngelZTimeStr[6] = "00:00";
-// ==== END of AngelZ Sequences CLASS =====
 
 // ======= SETUP ========
 void setup() {
@@ -243,7 +239,8 @@ void setup() {
   u8g2gfx.setFontMode(1);
   u8g2gfx.setFontDirection(0);
   u8g2gfx.setForegroundColor(ILI9341_GREEN);
-  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+  u8g2gfx.setBackgroundColor(ILI9341_BLACK); 
+  //
   pinMode(pinShutdown1, OUTPUT);
   pinMode(pinShutdown2, OUTPUT);
   digitalWrite(pinShutdown1, HIGH);
@@ -289,7 +286,8 @@ void loop() {
 
 // Type of signal
 void UpdateSignalIndicator() {
-  u8g2gfx.setFont(u8g2_font_t0_22b_tf);
+  //u8g2gfx.setFont(u8g2_font_10x20_tf); // support cyrillic
+  u8g2gfx.setFont(u8g2_font_t0_22b_tf); //
   u8g2gfx.setBackgroundColor(ILI9341_BLUE);
   
   // Clear the right portion of title bar first
@@ -602,7 +600,8 @@ void DisplayTreatInProgressScreen( int currentFreqIndex, int selectedItem,  unsi
 
 void DrawList() {
   tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK); 
-  u8g2gfx.setFont(u8g2_font_10x20_tf);
+  //
+  u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic); 
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   int currentPosY = LIST_Y_START;
   for (byte currentItem = 0; currentItem < ITEMS_PER_PAGE; currentItem++) {
@@ -622,7 +621,7 @@ void DrawList() {
 }
 
 void RedrawSelectionOnly() {
-  u8g2gfx.setFont(u8g2_font_10x20_tf);
+  u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic); 
   byte prevLocalIdx = prevSelectedItem - 1 - pageOffset;
   int prevY = LIST_Y_START + prevLocalIdx * ITEM_HEIGHT;
   tft.fillRect(8, prevY - 19, 304, 24, ILI9341_BLACK);
