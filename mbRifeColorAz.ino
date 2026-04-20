@@ -2,6 +2,8 @@
 // Arduino Mega2560 + 2.8" 320x240 TFT (ILI9341)
 // Optimized partial redraw for fast scrolling, countdown and remaining time
 // Added signal type indicator sin/square
+// AngelZ is updated to perfectly match the original, compensated sin signal.
+// Updated and verfied Cyrillic fonts to display list of diagnoses and top bar
 #include <EEPROM.h>
 #include <AD9833.h>    // https://github.com/Billwilliams1952/AD9833-Library-Arduino
 #include <SPI.h>
@@ -178,6 +180,8 @@ class Sequences {
     float GetDelaySequence(int currentPoint, double valueStart, double valueMax, double tau, int splitPoint);
 };
 
+const float ANGELZ_DELAY_SCALE = 3.734f;   // 439720 ms / 117757 ms = 3.734
+
 Sequences::Sequences(AD9833 *pGen) : m_pgen(pGen) {}
 
 // Execute10khzSequence
@@ -188,13 +192,15 @@ void Sequences::Execute10khzSequence() {
     }
 }
 
-// GetDelaySequence
+// GetDelaySequence - NOW SCALED to match real angel.mp3 length
 float Sequences::GetDelaySequence(int currentPoint, double valueStart, double valueMax, double tau, int splitPoint) {
+    float delayMs;
     if (currentPoint < splitPoint) {
-        return valueStart + (valueMax - valueStart) * (1 - exp(-currentPoint / tau));
+        delayMs = valueStart + (valueMax - valueStart) * (1 - exp(-currentPoint / tau));
     } else {
-        return valueMax * exp(-(currentPoint - splitPoint) / tau);
+        delayMs = valueMax * exp(-(currentPoint - splitPoint) / tau);
     }
+    return delayMs * ANGELZ_DELAY_SCALE;   // <-- THIS MAKES TOTAL SESSION ≈ 7 min 20 sec
 }
 
 #define   ANGELZ_TOTAL_POINTS       48
@@ -239,8 +245,7 @@ void setup() {
   u8g2gfx.setFontMode(1);
   u8g2gfx.setFontDirection(0);
   u8g2gfx.setForegroundColor(ILI9341_GREEN);
-  u8g2gfx.setBackgroundColor(ILI9341_BLACK); 
-  //
+  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   pinMode(pinShutdown1, OUTPUT);
   pinMode(pinShutdown2, OUTPUT);
   digitalWrite(pinShutdown1, HIGH);
@@ -309,9 +314,9 @@ void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msLeft, 
     u8g2gfx.setFont(u8g2_font_t0_22b_tf);
     u8g2gfx.setBackgroundColor(ILI9341_BLUE);
     u8g2gfx.setForegroundColor(ILI9341_YELLOW);
-    int titleWidth = u8g2gfx.getUTF8Width("Angel-Z session");
+    int titleWidth = u8g2gfx.getUTF8Width("Angel-Z SESSION");
     u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
-    u8g2gfx.print("Angel-Z session");
+    u8g2gfx.print("Angel-Z SESSION");
     titleDrawn = true;
   }
 
@@ -462,7 +467,7 @@ void DisplayTreatInProgressScreen( int currentFreqIndex, int selectedItem,  unsi
 
     // Top Bar: Diagnosis
     tft.fillRect(0, 0, SCREEN_W, TITLE_BAR_HIGHT, ILI9341_BLUE);
-    u8g2gfx.setFont(u8g2_font_t0_22b_tf);
+    u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic);
     u8g2gfx.setBackgroundColor(ILI9341_BLUE);
     u8g2gfx.setForegroundColor(ILI9341_YELLOW);
     int titleWidth = u8g2gfx.getUTF8Width(titleLine);
@@ -470,10 +475,10 @@ void DisplayTreatInProgressScreen( int currentFreqIndex, int selectedItem,  unsi
     u8g2gfx.print(titleLine);
 
     // Signal type indicator - top right of title bar
-    u8g2gfx.setFont(u8g2_font_t0_22b_tf);
+    u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic);
     u8g2gfx.setBackgroundColor(ILI9341_BLUE);
     u8g2gfx.setForegroundColor(ILI9341_YELLOW);
-    const char* sigStr = isSineWave ? "SIN" : "_||_";
+    const char* sigStr = isSineWave ? "SIN " : "_||_";
     int sigWidth = u8g2gfx.getUTF8Width(sigStr);
     u8g2gfx.setCursor(320 - sigWidth - 4, 24);
     u8g2gfx.print(sigStr);
@@ -668,12 +673,13 @@ void OpenAngelZ() {
   u8g2gfx.setBackgroundColor(ILI9341_BLUE);
   u8g2gfx.setForegroundColor(ILI9341_YELLOW);
   tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
-  int titleWidth = u8g2gfx.getUTF8Width("Angel-Z session");
+  int titleWidth = u8g2gfx.getUTF8Width("Angel-Z SESSION");
   u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
   u8g2gfx.print("Angel-Z session");
 
   Sequences sequences(&gen);
 
+  // Pre-calculation now automatically uses scaled delays (for debug only)
   int totalSteps = ANGELZ_NUMBER_OF_CYCLES * ANGELZ_TOTAL_POINTS;
   unsigned long sessionStart = millis();
   unsigned long sessionDuration = 0;
@@ -688,14 +694,14 @@ void OpenAngelZ() {
   for (int cycleNumber = 0; cycleNumber < ANGELZ_NUMBER_OF_CYCLES; ++cycleNumber) {
     for (int pointNumber = 0; pointNumber < ANGELZ_TOTAL_POINTS; ++pointNumber) {
       gen.EnableOutput(true);
-      sequences.Execute10khzSequence();
+      sequences.Execute10khzSequence();   // 10 kHz burst (same as original signal)
       delay(3);
       gen.EnableOutput(false);
 
       int freqBarIndex = pointNumber * 24 / ANGELZ_TOTAL_POINTS;
       unsigned long elapsed = millis() - sessionStart;
-      //
       DisplayTreatInProgressScreenAngelZ(freqBarIndex, elapsed, (currentStep == 0));
+
       float delayValue = sequences.GetDelaySequence(pointNumber, angelz_valueStart[cycleNumber], angelz_valueMax[cycleNumber], angelz_tau[cycleNumber], ANGELZ_SPLIT_POINT);
       delay((unsigned long)delayValue);
 
@@ -703,7 +709,7 @@ void OpenAngelZ() {
     }
   }
 
-  // Show finished message for 3 seconds
+  // Show finished message
   tft.fillScreen(ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_helvB24_te);
   u8g2gfx.setForegroundColor(ILI9341_GREEN);
