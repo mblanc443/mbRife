@@ -1,7 +1,8 @@
-// Uses Adafruit_ILI9341 + U8g2_for_Adafruit_GFX for Cyrillic
-// Arduino Mega2560 + 2.8" 320x240 TFT (ILI9341)
-// MODIFIED: Dynamic arrays, new format Name:time,freq1..freq10, skip zero freqs
-// Format: Headache:60,freq1,freq2...freq10 (60 sec per each non-zero frequency)
+// Complete Rife Machine Project - Arduino Mega2560 + ILI9341 + AD9833
+// Dynamic diagnosis arrays, format Name:time,freq1..freq10
+// Pin 8 signal type indicator, SD card support, AngelZ unchanged
+// Absolute timing for accurate session countdown
+
 #include <EEPROM.h>
 #include <AD9833.h>
 #include <SPI.h>
@@ -21,7 +22,7 @@
   #define debugln(x)
 #endif
 
-// ILI9341 Pins
+// ILI9341 Pins (Hardware SPI on Mega: SCK=52, MOSI=51)
 #define TFT_CS          53
 #define TFT_DC          48
 #define TFT_RST         49
@@ -42,6 +43,7 @@ AD9833 gen(pinGenCS);
 #define pinBeepOut       4
 #define pinShutdown2     5
 #define pinShutdown1     6
+#define pinSignalType    8
 #define pinBtnEnter     21
 #define pinBatteryLevel A0
 
@@ -56,14 +58,10 @@ const float R1 = 32000.0;
 const float R2 = 8000.0;
 const float referenceVoltage = 5.0;
 
-// ============================================================
-// NEW FORMAT: default_diagnoses_raw[] stores "Name:seconds"
-// ============================================================
-
 // Default diagnosis names with time per frequency in seconds
 // Format: "Name:seconds" e.g. "Good Sleep:120" = 2 min per non-zero freq
 const char* default_diagnoses_raw[] = {
-  "Good Sleep:120",       // 2 min per freq, freqs: 6,5,4 = 6 min total
+  "Good Sleep:120",
   "Alcoholism:60",
   "Angina:60",
   "Stomachache:60",
@@ -101,7 +99,7 @@ const char* default_diagnoses_raw[] = {
   "AngelZ:0"
 };
 
-// Frequencies in PROGMEM - same as before
+// Frequencies in PROGMEM
 const int frequencies[] PROGMEM = {
   6,5,4,0,0,0,0,0,0,0,
   10000,0,0,0,0,0,0,0,0,0,
@@ -141,57 +139,14 @@ const int frequencies[] PROGMEM = {
   0,0,0,0,0,0,0,0,0,0
 };
 
+// Dynamic runtime arrays
+char     **diagnosis_names       = NULL;
+int      *diagnosis_time_sec     = NULL;
+int      **diagnosis_frequencies = NULL;
+int      num_diagnoses           = 0;
+int      capacity_diagnoses      = 0;
 
-// FORWARD DECLARATIONS  
-void DisplayErrorMessage(const char* message, uint16_t color = ILI9341_RED);
-void DisplayTreatInProgressScreen(int currentFreqIndex, int selectedItem, unsigned long msLeft, bool forceFull = false);
-void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msLeft, bool forceFull = false);
-void DisplayIntroScreen(void);
-void DrawTitleBar();
-void DrawBattery();
-void DrawList();
-void RedrawSelectionOnly();
-void ScrollItem(bool direction);
-byte CalulatePageOffset(byte item);
-void SetSelectedItem(byte item);
-void UpdateSignalIndicator();
-void ProcessButtonClick();
-bool GenerateFrequency();
-void OpenAngelZ();
-void Shutdown();
-void OnScrollChange();
-int8_t AnalyzeEncoderChange();
-void OnButtonPress();
-void DrawIntroFrame();
-void DrawGoldenCrown(int cx, int topY);
-float MeasureBatteryVoltage();
-void PlayTone(int n);
-bool AddDiagnosis(const char* nameWithTime, const int* freqs);
-bool EnsureDiagnosisCapacity();
-void FreeDiagnosisArrays();
-void LoadDefaultDiagnoses();
-void CreateDefaultSettingsFile();
-void InitializeSDAndSettings();
-unsigned long GetTotalSessionMs(int diagIndex);
-
-
-// ============================================================
-// DYNAMIC RUNTIME ARRAYS - allocated with malloc/realloc
-// ============================================================
-// Diagnosis name (without :time part) - max 28 chars + null
-// Diagnosis time per frequency in seconds
-// Diagnosis frequencies [10]
-
-char     **diagnosis_names     = NULL;   // dynamic array of char[29]
-int      *diagnosis_time_sec   = NULL;   // seconds per frequency for each diagnosis
-int      **diagnosis_frequencies = NULL; // dynamic array of int[10]
-int      num_diagnoses         = 0;
-int      capacity_diagnoses    = 0;      // current allocated capacity
-
-// Warn threshold
 #define WARN_DIAGNOSES_THRESHOLD 100
-
-// Name max length (stored)
 #define NAME_MAX_LEN 28
 
 const int SCROLL_DOWN = 0;
@@ -240,43 +195,130 @@ static char prevTimeStr[6]       = "99:99";
 static char prevAngelZTimeStr[6] = "00:00";
 static bool treatmentScreenDrawn =   false;
 
-// ============================================================
-// DYNAMIC ARRAY MANAGEMENT
-// ============================================================
+// ==== AngelZ Constants ====
+#define   ANGELZ_TOTAL_POINTS       48
+const int ANGELZ_SPLIT_POINT      = 24;
+const int ANGELZ_NUMBER_OF_CYCLES = 59;
+const float ANGELZ_DELAY_SCALE    = 3.734f;
 
-// Ensure capacity for at least (num_diagnoses+1) entries
-// Returns true on success
+float angelz_valueStart[ANGELZ_NUMBER_OF_CYCLES] = {
+  20.0, 15.0, 18.0, 25.0, 22.0, 30.0, 21.0, 35.0, 23.0, 40.0,
+  24.0, 45.0, 16.0, 27.0, 19.0, 31.0, 13.0, 28.0, 14.0, 34.0,
+  12.0, 39.0, 10.0, 42.0, 11.0, 37.0, 9.0, 33.0, 8.0, 36.0,
+  7.0, 29.0, 6.0, 32.0, 5.0, 38.0, 4.0, 41.0, 3.0, 44.0,
+  2.0, 43.0, 1.0, 46.0, 0.5, 48.0, 0.2, 50.0, 0.1, 52.0,
+  0.0, 53.0, 12.0, 17.0, 22.0, 28.0, 34.0, 41.0, 45.0
+};
+
+float angelz_valueMax[ANGELZ_NUMBER_OF_CYCLES] = {
+  52.6, 45.0, 55.0, 60.0, 50.0, 65.0, 53.0, 70.0, 56.0, 75.0,
+  59.0, 80.0, 48.0, 62.0, 51.0, 64.0, 49.0, 67.0, 50.0, 71.0,
+  46.0, 73.0, 47.0, 76.0, 54.0, 78.0, 57.0, 79.0, 58.0, 82.0,
+  61.0, 85.0, 63.0, 88.0, 65.0, 90.0, 68.0, 92.0, 66.0, 95.0,
+  69.0, 97.0, 72.0, 99.0, 74.0, 100.0, 77.0, 102.0, 80.0, 105.0,
+  82.0, 110.0, 55.0, 60.0, 65.0, 70.0, 75.0, 85.0, 90.0
+};
+
+float angelz_tau[ANGELZ_NUMBER_OF_CYCLES] = {
+  5.0, 7.0, 4.5, 6.0, 3.5, 5.5, 4.0, 6.5, 3.0, 5.0,
+  4.3, 6.8, 3.8, 6.1, 3.2, 6.4, 4.2, 5.6, 3.9, 6.7,
+  4.4, 5.9, 4.1, 6.9, 3.6, 5.7, 3.3, 6.3, 3.1, 6.2,
+  4.6, 6.6, 3.7, 5.8, 4.9, 7.0, 3.4, 6.5, 4.8, 7.1,
+  5.1, 7.2, 3.9, 6.0, 3.5, 6.8, 4.2, 6.3, 5.0, 7.3,
+  5.2, 7.4, 4.0, 5.5, 6.0, 6.5, 5.7, 6.8, 7.1
+};
+
+
+// FORWARD DECLARATIONS
+void DisplayErrorMessage(const char* message, uint16_t color = ILI9341_RED);
+void DisplayTreatInProgressScreen(int currentFreqIndex, int selectedItem, unsigned long msLeft, bool forceFull = false);
+void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msLeft, bool forceFull = false);
+void DisplayIntroScreen(void);
+void DrawTitleBar();
+void DrawBattery();
+void DrawList();
+void RedrawSelectionOnly();
+void ScrollItem(bool direction);
+byte CalulatePageOffset(byte item);
+void SetSelectedItem(byte item);
+void UpdateSignalIndicator();
+void ProcessButtonClick();
+bool GenerateFrequency();
+void OpenAngelZ();
+void Shutdown();
+void OnScrollChange();
+int8_t AnalyzeEncoderChange();
+void OnButtonPress();
+void DrawIntroFrame();
+void DrawGoldenCrown(int cx, int topY);
+float MeasureBatteryVoltage();
+void PlayTone(int n);
+bool AddDiagnosis(const char* nameWithTime, const int* freqs);
+bool EnsureDiagnosisCapacity();
+void FreeDiagnosisArrays();
+void LoadDefaultDiagnoses();
+void CreateDefaultSettingsFile();
+void InitializeSDAndSettings();
+unsigned long GetTotalSessionMs(int diagIndex);
+
+
+// AngelZ Sequences Class
+class Sequences {
+  private:
+    AD9833 *m_pgen;
+  public:
+    Sequences() {}
+    Sequences(AD9833 *pGen);
+    void Execute10khzSequence();
+    float GetDelaySequence(int currentPoint, float valueStart, float valueMax, float tau, int splitPoint);
+};
+
+Sequences::Sequences(AD9833 *pGen) : m_pgen(pGen) {}
+
+void Sequences::Execute10khzSequence() {
+  for (int pulseNum = 0; pulseNum < 20; pulseNum++) {
+    m_pgen->EnableOutput(true);
+    m_pgen->ApplySignal(SQUARE_WAVE, REG0, 10000);
+  }
+}
+
+float Sequences::GetDelaySequence(int currentPoint, float valueStart, float valueMax, float tau, int splitPoint) {
+  float delayMs;
+  if (currentPoint < splitPoint) {
+    delayMs = valueStart + (valueMax - valueStart) * (1 - exp(-currentPoint / tau));
+  } else {
+    delayMs = valueMax * exp(-(currentPoint - splitPoint) / tau);
+  }
+  return delayMs * ANGELZ_DELAY_SCALE;
+}
+
+// DYNAMIC ARRAY MANAGEMENT
 bool EnsureDiagnosisCapacity() {
   if (num_diagnoses < capacity_diagnoses) return true;
 
-  int newCapacity = capacity_diagnoses + 10; // grow by 10 at a time
+  int newCapacity = capacity_diagnoses + 10;
 
-  // Reallocate diagnosis_names array of pointers
   char **newNames = (char**)realloc(diagnosis_names, newCapacity * sizeof(char*));
   if (!newNames) return false;
   diagnosis_names = newNames;
 
-  // Allocate new name buffers for the new slots
   for (int i = capacity_diagnoses; i < newCapacity; i++) {
     diagnosis_names[i] = (char*)malloc((NAME_MAX_LEN + 1) * sizeof(char));
     if (!diagnosis_names[i]) return false;
     diagnosis_names[i][0] = '\0';
   }
 
-  // Reallocate time array
   int *newTimes = (int*)realloc(diagnosis_time_sec, newCapacity * sizeof(int));
   if (!newTimes) return false;
   diagnosis_time_sec = newTimes;
   for (int i = capacity_diagnoses; i < newCapacity; i++) {
-    diagnosis_time_sec[i] = 60; // default
+    diagnosis_time_sec[i] = 60;
   }
 
-  // Reallocate frequencies array of pointers
   int **newFreqs = (int**)realloc(diagnosis_frequencies, newCapacity * sizeof(int*));
   if (!newFreqs) return false;
   diagnosis_frequencies = newFreqs;
 
-  // Allocate new frequency arrays for new slots
   for (int i = capacity_diagnoses; i < newCapacity; i++) {
     diagnosis_frequencies[i] = (int*)malloc(10 * sizeof(int));
     if (!diagnosis_frequencies[i]) return false;
@@ -287,7 +329,6 @@ bool EnsureDiagnosisCapacity() {
   return true;
 }
 
-// Free all dynamic memory
 void FreeDiagnosisArrays() {
   if (diagnosis_names) {
     for (int i = 0; i < capacity_diagnoses; i++) {
@@ -311,25 +352,18 @@ void FreeDiagnosisArrays() {
   capacity_diagnoses = 0;
 }
 
-// Add one diagnosis entry dynamically
-// nameWithTime format: "Name:seconds"  e.g. "Headache:60"
-// freqs: pointer to 10 ints
-// Returns true on success
 bool AddDiagnosis(const char* nameWithTime, const int* freqs) {
-  // Check capacity and grow if needed
   if (!EnsureDiagnosisCapacity()) return false;
 
-  // Warn if over threshold
   if (num_diagnoses == WARN_DIAGNOSES_THRESHOLD) {
     DisplayErrorMessage("Diagnoses count exceeded 100 - continuing...", ILI9341_YELLOW);
     delay(2000);
   }
 
-  // Parse name and time from "Name:seconds"
   String s = String(nameWithTime);
   int colonPos = s.lastIndexOf(':');
   String nameStr;
-  int timeSec = 60; // default
+  int timeSec = 60;
 
   if (colonPos > 0) {
     nameStr = s.substring(0, colonPos);
@@ -337,20 +371,16 @@ bool AddDiagnosis(const char* nameWithTime, const int* freqs) {
     timeStr.trim();
     nameStr.trim();
     timeSec = timeStr.toInt();
-    if (timeSec <= 0) timeSec = 60;
+    if (timeSec <= 0 && nameStr != "AngelZ") timeSec = 60;
   } else {
     nameStr = s;
     nameStr.trim();
   }
 
-  // Store name (truncated to NAME_MAX_LEN)
   strncpy(diagnosis_names[num_diagnoses], nameStr.c_str(), NAME_MAX_LEN);
   diagnosis_names[num_diagnoses][NAME_MAX_LEN] = '\0';
-
-  // Store time per frequency
   diagnosis_time_sec[num_diagnoses] = timeSec;
 
-  // Store frequencies
   for (int j = 0; j < 10; j++) {
     diagnosis_frequencies[num_diagnoses][j] = freqs[j];
   }
@@ -359,393 +389,71 @@ bool AddDiagnosis(const char* nameWithTime, const int* freqs) {
   return true;
 }
 
-// ============================================================
-// Compute total session ms for a given diagnosis index
-// = time_sec * count_of_nonzero_freqs * 1000
-// ============================================================
 unsigned long GetTotalSessionMs(int diagIndex) {
   int count = 0;
   for (int i = 0; i < 10; i++) {
     if (diagnosis_frequencies[diagIndex][i] > 0) count++;
   }
-  if (count == 0) count = 1; // avoid zero
+  if (count == 0) count = 1;
   return (unsigned long)diagnosis_time_sec[diagIndex] * count * 1000UL;
 }
 
 // ============================================================
-// SD helper: error/status message
+// DISPLAY HELPER FUNCTIONS
 // ============================================================
-void DisplayErrorMessage(const char* message, uint16_t color = ILI9341_RED) {
+void DisplayErrorMessage(const char* message, uint16_t color) {
   tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_8x13_t_cyrillic);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   u8g2gfx.setForegroundColor(color);
   int w = u8g2gfx.getUTF8Width(message);
-  // If message too wide, just draw from left
   int x = (w < 320) ? (320 - w) / 2 : 2;
   u8g2gfx.setCursor(x, 120);
   u8g2gfx.print(message);
 }
 
-// ============================================================
-// Create default settings.txt - NEW FORMAT: Name:time,freq1..freq10
-// ============================================================
-void CreateDefaultSettingsFile() {
-  SD.remove("settings.txt");
-  File file = SD.open("settings.txt", FILE_WRITE);
-  if (!file) return;
-
-  file.println("## Diagnoses section - format: Name:seconds,freq1,freq2,...,freq10");
-  file.println("## seconds = time per each non-zero frequency");
-  file.println("## Zero frequencies are skipped");
-  file.println("[diagnoses]");
-
-  int n = sizeof(default_diagnoses_raw) / sizeof(default_diagnoses_raw[0]);
-  for (int i = 0; i < n; i++) {
-    file.print(default_diagnoses_raw[i]); // already has name:time
-    for (int j = 0; j < 10; j++) {
-      file.print(",");
-      file.print(pgm_read_word(&frequencies[10 * i + j]));
-    }
-    file.println();
-  }
-  file.close();
-}
-
-// ============================================================
-// Load defaults into runtime dynamic arrays
-// ============================================================
-void LoadDefaultDiagnoses() {
-  FreeDiagnosisArrays();
-
-  int n = sizeof(default_diagnoses_raw) / sizeof(default_diagnoses_raw[0]);
-  for (int i = 0; i < n; i++) {
-    int freqs[10];
-    for (int j = 0; j < 10; j++) {
-      freqs[j] = pgm_read_word(&frequencies[10 * i + j]);
-    }
-    if (!AddDiagnosis(default_diagnoses_raw[i], freqs)) {
-      // out of RAM, stop
-      DisplayErrorMessage("RAM full loading defaults", ILI9341_RED);
-      delay(2000);
-      break;
-    }
-  }
-}
-
-// ============================================================
-// SD initialization - NEW FORMAT PARSER
-// Format per line: Name:seconds,freq1,freq2,...,freq10
-// ============================================================
-void InitializeSDAndSettings() {
-  if (!SD.begin(SD_CS)) {
-    DisplayErrorMessage("SD card is not present");
-    delay(3000);
-    LoadDefaultDiagnoses();
-    return;
-  }
-
-  File file = SD.open("settings.txt", FILE_READ);
-  bool fileWasMissing = !file;
-
-  if (fileWasMissing) {
-    DisplayErrorMessage("settings.txt missing - creating...", ILI9341_YELLOW);
-    delay(2000);
-    CreateDefaultSettingsFile();
-    DisplayErrorMessage("settings.txt created", ILI9341_GREEN);
-    delay(2000);
-    file = SD.open("settings.txt", FILE_READ);
-  }
-
-  if (!file) {
-    LoadDefaultDiagnoses();
-    return;
-  }
-
-  bool hasDiagnosesSection = false;
-  String currentSection = "";
-  FreeDiagnosisArrays(); // clear before loading from SD
-  bool diagnosesHealthy = true;
-  bool warnShown = false;
-
-  while (file.available()) {
-    String line = file.readStringUntil('\n');
-    line.trim();
-    if (line.startsWith("##") || line.length() == 0) continue;
-
-    if (line.startsWith("[")) {
-      currentSection = line;
-      if (line.indexOf("[diagnoses]") != -1) hasDiagnosesSection = true;
-      continue;
-    }
-
-    if (currentSection == "[diagnoses]") {
-
-      // Show warning once when threshold exceeded but continue
-      if (num_diagnoses == WARN_DIAGNOSES_THRESHOLD && !warnShown) {
-        DisplayErrorMessage("Diagnoses > 100, still loading...", ILI9341_YELLOW);
-        delay(2000);
-        warnShown = true;
-      }
-
-      // Count commas - expect exactly 10 (one after name:time, then 9 more between freqs)
-      int commaCount = 0;
-      for (unsigned int i = 0; i < line.length(); i++) {
-        if (line[i] == ',') commaCount++;
-      }
-      if (commaCount != 10) {
-        diagnosesHealthy = false;
-        debug("Bad comma count: "); debugln(line);
-        continue;
-      }
-
-      // First field is "Name:seconds"
-      int firstComma = line.indexOf(',');
-      if (firstComma <= 0) {
-        diagnosesHealthy = false;
-        continue;
-      }
-
-      String nameWithTime = line.substring(0, firstComma);
-      nameWithTime.trim();
-
-      // Validate: must contain ':'
-      if (nameWithTime.indexOf(':') < 0) {
-        // Try to be lenient - use default time of 60
-        nameWithTime = nameWithTime + ":60";
-      }
-
-      // Parse frequencies
-      bool freqOk = true;
-      int freqs[10];
-      int pos = firstComma + 1;
-      for (int f = 0; f < 10; f++) {
-        int nextComma = (f < 9) ? line.indexOf(',', pos) : (int)line.length();
-        if (nextComma == -1 && f < 9) { freqOk = false; break; }
-        String freqStr = line.substring(pos, nextComma);
-        freqStr.trim();
-        if (freqStr.length() == 0) { freqOk = false; break; }
-        bool isNum = true;
-        for (unsigned int k = 0; k < freqStr.length(); k++) {
-          if (!isdigit(freqStr[k])) { isNum = false; break; }
-        }
-        if (!isNum) { freqOk = false; break; }
-        freqs[f] = freqStr.toInt();
-        pos = nextComma + 1;
-      }
-
-      if (!freqOk) {
-        diagnosesHealthy = false;
-        debug("Bad freq in: "); debugln(line);
-        continue;
-      }
-
-      // Add to dynamic array
-      if (!AddDiagnosis(nameWithTime.c_str(), freqs)) {
-        DisplayErrorMessage("RAM exhausted, stopped loading", ILI9341_RED);
-        delay(2000);
-        break;
-      }
-    }
-  }
-  file.close();
-
-  if (!hasDiagnosesSection) {
-    DisplayErrorMessage("No [diagnoses] section - creating...", ILI9341_RED);
-    delay(3000);
-    CreateDefaultSettingsFile();
-    DisplayErrorMessage("[diagnoses] section created", ILI9341_GREEN);
-    delay(2000);
-    LoadDefaultDiagnoses();
-    return;
-  }
-
-  if (!diagnosesHealthy || num_diagnoses == 0) {
-    String err = (num_diagnoses == 0)
-                 ? "No diagnoses data"
-                 : "Some entries had bad format";
-    DisplayErrorMessage(err.c_str(), ILI9341_YELLOW);
-    delay(3000);
-
-    if (num_diagnoses == 0) {
-      // Total failure - recreate and load defaults
-      CreateDefaultSettingsFile();
-      DisplayErrorMessage("Defaults recreated", ILI9341_GREEN);
-      delay(2000);
-      LoadDefaultDiagnoses();
-    }
-    // If partial data loaded (diagnosesHealthy=false but num>0), keep what we have
-    return;
-  }
-}
-
-// ============================================================
-// SETUP
-// ============================================================
-void setup() {
-  Serial.begin(9600);
-  tft.begin();
-  tft.setRotation(1);
-  tft.fillScreen(ILI9341_BLACK);
-  u8g2gfx.begin(tft);
-  u8g2gfx.setFontMode(1);
-  u8g2gfx.setFontDirection(0);
-  u8g2gfx.setForegroundColor(ILI9341_GREEN);
-  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-  pinMode(pinShutdown1, OUTPUT);
-  pinMode(pinShutdown2, OUTPUT);
-  digitalWrite(pinShutdown1, HIGH);
-  digitalWrite(pinShutdown2, LOW);
-  pinMode(pinEncoderCW,  INPUT_PULLUP);
-  pinMode(pinEncoderCCW, INPUT_PULLUP);
-  pinMode(pinBtnEnter,   INPUT_PULLUP);
-  gen.Begin();
-  gen.EnableOutput(false);
-
-  DisplayIntroScreen();
-  delay(2500);
-
-  InitializeSDAndSettings();
-
-  DrawTitleBar();
-  DrawBattery();
-  DrawList();
-  attachInterrupt(digitalPinToInterrupt(pinEncoderCW),  OnScrollChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnScrollChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(pinBtnEnter),   OnButtonPress,  CHANGE);
-  byte saved = EEPROM.read(eepromAddress);
-  if (saved >= 1 && (int)saved <= num_diagnoses) {
-    SetSelectedItem(saved);
-  } else {
-    SetSelectedItem(1);
-  }
-}
-
-// ============================================================
-// LOOP
-// ============================================================
-void loop() {
-  if (encoderMoved) {
-    int8_t direction = AnalyzeEncoderChange();
-    if (direction != 0) {
-      if (!isGeneratingFrequency) {
-        ScrollItem(direction > 0 ? SCROLL_UP : SCROLL_DOWN);
-      }
-    }
-  }
-
-  if (btnEnterPressed) {
-    switch (buttonOutput) {
-      case STATE_SHORT: ProcessButtonClick(); buttonOutput = STATE_NORMAL; break;
-      case STATE_LONG:  Shutdown();           buttonOutput = STATE_NORMAL; break;
-    }
-    btnEnterPressed = false;
-  }
-}
-
-// ============================================================
-// GENERATE FREQUENCY - UPDATED to use per-diagnosis time
-// ============================================================
-bool GenerateFrequency() {
-  int diagIdx = selectedItem - 1;
-
-  // Collect non-zero frequency indices
-  int numFreq = 0;
-  int freqIndices[10];
-  for (int i = 0; i < 10; i++) {
-    if (diagnosis_frequencies[diagIdx][i] > 0) {
-      freqIndices[numFreq] = i;
-      numFreq++;
-    }
-  }
-  if (numFreq == 0) return false;
-
-  // Total session time: time_sec * numFreq * 1000 ms
-  unsigned long secPerFreq = (unsigned long)diagnosis_time_sec[diagIdx];
-  unsigned long fragmentMs = secPerFreq * 1000UL;
-  unsigned long totalSessionMs = fragmentMs * numFreq;
-
-  unsigned long sessionStart = millis();
-
-  gen.EnableOutput(true);
-  strComplete = (char*)"";
-  unsigned long lastSecond = 0;
-  prevFreqIndex = -1;
-  treatmentScreenDrawn = false;
-
-  for (int i = 0; i < numFreq; i++) {
-    unsigned long freqStart = millis();
-    intFreqToGenerate = diagnosis_frequencies[diagIdx][freqIndices[i]];
-
-    unsigned long elapsed = millis() - sessionStart;
-    unsigned long msLeft = (elapsed < totalSessionMs) ? (totalSessionMs - elapsed) : 0;
-
-    DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft, !treatmentScreenDrawn);
-    treatmentScreenDrawn = true;
-    UpdateSignalIndicator();
-
-    gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE, REG0, intFreqToGenerate);
-
-    // Run for exactly fragmentMs per frequency
-    while ((millis() - freqStart) < fragmentMs && isGeneratingFrequency) {
-      if (btnEnterPressed) {
-        gen.EnableOutput(false);
-        isSineWave = false;
-        return true; // aborted
-      }
-      // Encoder: toggle sin/square
-      if (encoderMoved) {
-        int8_t direction = AnalyzeEncoderChange();
-        if (direction > 0 && !isSineWave) {
-          isSineWave = true;
-          gen.ApplySignal(SINE_WAVE, REG0, intFreqToGenerate);
-          gen.SetOutputSource(REG0);
-          UpdateSignalIndicator();
-        } else if (direction < 0 && isSineWave) {
-          isSineWave = false;
-          gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
-          UpdateSignalIndicator();
-        }
-      }
-      // Update display every second
-      unsigned long now = millis();
-      if (now - lastSecond >= 1000) {
-        unsigned long elapsed2 = now - sessionStart;
-        unsigned long msLeft2 = (elapsed2 < totalSessionMs) ? (totalSessionMs - elapsed2) : 0;
-        DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft2, false);
-        UpdateSignalIndicator();
-        lastSecond = now;
-      }
-    }
-    prevFreqIndex = freqIndices[i];
-    PlayTone(1);
-  }
-
-  gen.EnableOutput(false);
-  isGeneratingFrequency = false;
-  isSineWave = false;
-  strComplete = (char*)"Finished!";
-  PlayTone(3);
-
-  tft.fillScreen(ILI9341_BLACK);
+void DisplayIntroScreen(void) {
+  tft.fillScreen(ILI9341_BLUE);
+  DrawIntroFrame();
   u8g2gfx.setFont(u8g2_font_helvB24_te);
-  u8g2gfx.setForegroundColor(ILI9341_GREEN);
-  int textWidth = u8g2gfx.getUTF8Width("Finished!");
+  u8g2gfx.setForegroundColor(GOLD2);
+  int textWidth = u8g2gfx.getUTF8Width("Dr. Royal Rife");
+  u8g2gfx.setCursor((320 - textWidth) / 2, 80);
+  u8g2gfx.print("Dr. Royal Rife");
+  textWidth = u8g2gfx.getUTF8Width("Healing Machine");
   u8g2gfx.setCursor((320 - textWidth) / 2, 120);
-  u8g2gfx.print("Finished!");
-  delay(3000);
-
-  titleLine = (char*)"DIAGNOSES:";
-  strComplete = (char*)"";
-  digitalWrite(pinShutdown1, LOW);
-  digitalWrite(pinShutdown2, HIGH);
-
-  return false;
+  u8g2gfx.print("Healing Machine");
+  DrawGoldenCrown(160, 135);
+  u8g2gfx.setFont(u8g2_font_7x14_tr);
+  u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
+  textWidth = u8g2gfx.getUTF8Width("by kd2cmo 2026");
+  u8g2gfx.setCursor((320 - textWidth) / 2, 190);
+  u8g2gfx.print("by kd2cmo 2026");
+  textWidth = u8g2gfx.getUTF8Width("Wait...");
+  u8g2gfx.setCursor((320 - textWidth) / 2, 210);
+  u8g2gfx.print("Wait...");
 }
 
-// ============================================================
-// All other functions unchanged from original
-// ============================================================
+void DrawTitleBar() {
+  tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
+  u8g2gfx.setFont(u8g2_font_t0_22b_tf);
+  u8g2gfx.setBackgroundColor(ILI9341_BLUE);
+  u8g2gfx.setForegroundColor(ILI9341_YELLOW);
+  int titleWidth = u8g2gfx.getUTF8Width(titleLine);
+  u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
+  u8g2gfx.print(titleLine);
+}
+
+void DrawBattery() {
+  float v = MeasureBatteryVoltage();
+  String s = String(v, 1) + "v";
+  u8g2gfx.setFont(u8g2_font_9x18B_tf);
+  u8g2gfx.setBackgroundColor(ILI9341_BLUE);
+  u8g2gfx.setForegroundColor(ILI9341_YELLOW);
+  int w = u8g2gfx.getUTF8Width(s.c_str());
+  u8g2gfx.setCursor(320 - w - 8, 23);
+  u8g2gfx.print(s.c_str());
+}
 
 void UpdateSignalIndicator() {
   u8g2gfx.setFont(u8g2_font_t0_22b_tf);
@@ -758,7 +466,162 @@ void UpdateSignalIndicator() {
   u8g2gfx.print(sigStr);
 }
 
-void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msLeft, bool forceFull = false) {
+void SetSelectedItem(byte item) {
+  selectedItem = item;
+  pageOffset = CalulatePageOffset(item);
+  prevSelectedItem = item;
+  DrawList();
+}
+
+
+// TREATMENT IN-PROGRESS SCREEN
+void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned long msLeft, bool forceFull) {
+  const int SCREEN_W = 320;
+  const int SCREEN_H = 240;
+  const int LEFT_W = SCREEN_W / 3;
+  const int RIGHT_W = SCREEN_W - LEFT_W;
+  const int BAR_H = (SCREEN_H - TITLE_BAR_HIGHT) / 10;
+  const int BAR_W = LEFT_W - 8;
+  const int BAR_X = 4;
+  const int BAR_Y0 = TITLE_BAR_HIGHT;
+
+  int diagIdx = selItem - 1;
+
+  if (forceFull || !treatmentScreenDrawn) {
+    tft.fillScreen(ILI9341_BLACK);
+    tft.fillRect(0, 0, SCREEN_W, TITLE_BAR_HIGHT, ILI9341_BLUE);
+    u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic);
+    u8g2gfx.setBackgroundColor(ILI9341_BLUE);
+    u8g2gfx.setForegroundColor(ILI9341_YELLOW);
+    int titleWidth = u8g2gfx.getUTF8Width(titleLine);
+    u8g2gfx.setCursor((SCREEN_W - titleWidth) / 2, 24);
+    u8g2gfx.print(titleLine);
+
+    u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic);
+    u8g2gfx.setBackgroundColor(ILI9341_BLUE);
+    u8g2gfx.setForegroundColor(ILI9341_YELLOW);
+    const char* sigStr = isSineWave ? "SIN " : "_||_";
+    int sigWidth = u8g2gfx.getUTF8Width(sigStr);
+    u8g2gfx.setCursor(320 - sigWidth - 4, 24);
+    u8g2gfx.print(sigStr);
+
+    for (int i = 0; i < 10; i++) {
+      int freq = diagnosis_frequencies[diagIdx][i];
+      int y = BAR_Y0 + i * BAR_H;
+      uint16_t barColor;
+      if (freq == 0) {
+        barColor = tft.color565(20, 20, 20);
+      } else {
+        barColor = (i == currentFreqIndex) ? ILI9341_GREENYELLOW : ILI9341_DARKGREEN;
+      }
+      uint16_t borderColor = (i == currentFreqIndex && freq > 0) ? ILI9341_WHITE : barColor;
+      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 2, barColor);
+      if (i == currentFreqIndex && freq > 0)
+        tft.drawRect(BAR_X, y, BAR_W, BAR_H - 2, borderColor);
+      u8g2gfx.setFont(u8g2_font_helvB14_te);
+      u8g2gfx.setBackgroundColor(barColor);
+      u8g2gfx.setForegroundColor(ILI9341_PINK);
+      char freqStr[8];
+      if (freq > 0) sprintf(freqStr, "%d", freq);
+      else strcpy(freqStr, "-");
+      int textWidth = u8g2gfx.getUTF8Width(freqStr);
+      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 6, barColor);
+      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
+      u8g2gfx.print(freqStr);
+    }
+
+    u8g2gfx.setFont(u8g2_font_helvB24_te);
+    u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+    u8g2gfx.setForegroundColor(ILI9341_WHITE);
+    int labelWidth = u8g2gfx.getUTF8Width("Remaining");
+    int labelY = 100;
+    u8g2gfx.setCursor(LEFT_W + (RIGHT_W - labelWidth) / 2, labelY);
+    u8g2gfx.print("Remaining");
+
+    strcpy(prevTimeStr, "99:99");
+    prevFreqIndex = currentFreqIndex;
+    treatmentScreenDrawn = true;
+  }
+
+  if (prevFreqIndex != currentFreqIndex) {
+    if (prevFreqIndex >= 0 && prevFreqIndex < 10) {
+      int freq = diagnosis_frequencies[diagIdx][prevFreqIndex];
+      int y = BAR_Y0 + prevFreqIndex * BAR_H;
+      uint16_t barColor = (freq == 0) ? tft.color565(20, 20, 20) : ILI9341_DARKGREEN;
+      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 2, barColor);
+      u8g2gfx.setFont(u8g2_font_helvB14_te);
+      u8g2gfx.setBackgroundColor(barColor);
+      u8g2gfx.setForegroundColor(ILI9341_PINK);
+      char freqStr[8];
+      if (freq > 0) sprintf(freqStr, "%d", freq); else strcpy(freqStr, "-");
+      int textWidth = u8g2gfx.getUTF8Width(freqStr);
+      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 6, barColor);
+      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
+      u8g2gfx.print(freqStr);
+    }
+    if (currentFreqIndex >= 0 && currentFreqIndex < 10) {
+      int freq = diagnosis_frequencies[diagIdx][currentFreqIndex];
+      int y = BAR_Y0 + currentFreqIndex * BAR_H;
+      uint16_t barColor = (freq > 0) ? ILI9341_GREENYELLOW : tft.color565(20, 20, 20);
+      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 2, barColor);
+      if (freq > 0) tft.drawRect(BAR_X, y, BAR_W, BAR_H - 2, ILI9341_WHITE);
+      u8g2gfx.setFont(u8g2_font_helvB14_te);
+      u8g2gfx.setBackgroundColor(barColor);
+      u8g2gfx.setForegroundColor(ILI9341_PINK);
+      char freqStr[8];
+      if (freq > 0) sprintf(freqStr, "%d", freq); else strcpy(freqStr, "-");
+      int textWidth = u8g2gfx.getUTF8Width(freqStr);
+      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 6, barColor);
+      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
+      u8g2gfx.print(freqStr);
+    }
+    prevFreqIndex = currentFreqIndex;
+  }
+
+  unsigned long secondsLeft = msLeft / 1000;
+  if ((long)msLeft < 0) secondsLeft = 0;
+  int minLeft = secondsLeft / 60;
+  int secLeft = secondsLeft % 60;
+  char buf[6];
+  sprintf(buf, "%02d:%02d", minLeft, secLeft);
+
+  u8g2gfx.setFont(u8g2_font_fub42_tf);
+  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+  u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
+
+  int maxDigitW = 0;
+  for (char c = '0'; c <= '9'; c++) {
+    char tmp[2] = {c, 0};
+    int w = u8g2gfx.getUTF8Width(tmp);
+    if (w > maxDigitW) maxDigitW = w;
+  }
+  int colonW = u8g2gfx.getUTF8Width(":");
+  int totalW = maxDigitW * 4 + colonW;
+  int startX = LEFT_W + (RIGHT_W - totalW) / 2;
+  int cx = startX;
+  int charX[5], charW[5];
+  charX[0] = cx; charW[0] = maxDigitW; cx += maxDigitW;
+  charX[1] = cx; charW[1] = maxDigitW; cx += maxDigitW;
+  charX[2] = cx; charW[2] = colonW;    cx += colonW;
+  charX[3] = cx; charW[3] = maxDigitW; cx += maxDigitW;
+  charX[4] = cx; charW[4] = maxDigitW;
+
+  for (int i = 0; i < 5; i++) {
+    if (buf[i] != prevTimeStr[i] || (i == 2)) {
+      tft.fillRect(charX[i], 140, charW[i], 45, ILI9341_BLACK);
+      char tmp[2] = {buf[i], 0};
+      int actualW = u8g2gfx.getUTF8Width(tmp);
+      int offset = (charW[i] - actualW) / 2;
+      u8g2gfx.setCursor(charX[i] + offset, 180);
+      u8g2gfx.print(tmp);
+    }
+  }
+  strcpy(prevTimeStr, buf);
+}
+
+
+// ANGELZ TREATMENT SCREEN
+void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msLeft, bool forceFull) {
   static bool titleDrawn = false;
   if (forceFull || !titleDrawn) {
     tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
@@ -836,154 +699,179 @@ void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msLeft, 
   strcpy(prevAngelZTimeStr, buf);
 }
 
-void DisplayTreatInProgressScreen(int currentFreqIndex, int selectedItem, unsigned long msLeft, bool forceFull = false) {
-  const int SCREEN_W = 320;
-  const int SCREEN_H = 240;
-  const int LEFT_W = SCREEN_W / 3;
-  const int RIGHT_W = SCREEN_W - LEFT_W;
-  const int BAR_H = (SCREEN_H - TITLE_BAR_HIGHT) / 10;
-  const int BAR_W = LEFT_W - 8;
-  const int BAR_X = 4;
-  const int BAR_Y0 = TITLE_BAR_HIGHT;
+// SD CARD FUNCTIONS
+void CreateDefaultSettingsFile() {
+  SD.remove("settings.txt");
+  File file = SD.open("settings.txt", FILE_WRITE);
+  if (!file) return;
 
-  int diagIdx = selectedItem - 1;
+  file.println("## Diagnoses section - format: Name:seconds,freq1,freq2,...,freq10");
+  file.println("## seconds = time per each non-zero frequency");
+  file.println("## Zero frequencies are skipped");
+  file.println("[diagnoses]");
 
-  if (forceFull || !treatmentScreenDrawn) {
-    tft.fillScreen(ILI9341_BLACK);
-    tft.fillRect(0, 0, SCREEN_W, TITLE_BAR_HIGHT, ILI9341_BLUE);
-    u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic);
-    u8g2gfx.setBackgroundColor(ILI9341_BLUE);
-    u8g2gfx.setForegroundColor(ILI9341_YELLOW);
-    int titleWidth = u8g2gfx.getUTF8Width(titleLine);
-    u8g2gfx.setCursor((SCREEN_W - titleWidth) / 2, 24);
-    u8g2gfx.print(titleLine);
-
-    u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic);
-    u8g2gfx.setBackgroundColor(ILI9341_BLUE);
-    u8g2gfx.setForegroundColor(ILI9341_YELLOW);
-    const char* sigStr = isSineWave ? "SIN " : "_||_";
-    int sigWidth = u8g2gfx.getUTF8Width(sigStr);
-    u8g2gfx.setCursor(320 - sigWidth - 4, 24);
-    u8g2gfx.print(sigStr);
-
-    for (int i = 0; i < 10; i++) {
-      int freq = diagnosis_frequencies[diagIdx][i];
-      int y = BAR_Y0 + i * BAR_H;
-      // Dim color for zero-frequency slots (skipped)
-      uint16_t barColor;
-      if (freq == 0) {
-        barColor = tft.color565(20, 20, 20); // very dark = skipped
-      } else {
-        barColor = (i == currentFreqIndex) ? ILI9341_GREENYELLOW : ILI9341_DARKGREEN;
-      }
-      uint16_t borderColor = (i == currentFreqIndex && freq > 0) ? ILI9341_WHITE : barColor;
-      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 2, barColor);
-      if (i == currentFreqIndex && freq > 0)
-        tft.drawRect(BAR_X, y, BAR_W, BAR_H - 2, borderColor);
-      u8g2gfx.setFont(u8g2_font_helvB14_te);
-      u8g2gfx.setBackgroundColor(barColor);
-      u8g2gfx.setForegroundColor(ILI9341_PINK);
-      char freqStr[8];
-      if (freq > 0) sprintf(freqStr, "%d", freq);
-      else strcpy(freqStr, "-"); // show dash for zero/skipped
-      int textWidth = u8g2gfx.getUTF8Width(freqStr);
-      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 6, barColor);
-      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
-      u8g2gfx.print(freqStr);
+  int n = sizeof(default_diagnoses_raw) / sizeof(default_diagnoses_raw[0]);
+  for (int i = 0; i < n; i++) {
+    file.print(default_diagnoses_raw[i]);
+    for (int j = 0; j < 10; j++) {
+      file.print(",");
+      file.print(pgm_read_word(&frequencies[10 * i + j]));
     }
-
-    u8g2gfx.setFont(u8g2_font_helvB24_te);
-    u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-    u8g2gfx.setForegroundColor(ILI9341_WHITE);
-    int labelWidth = u8g2gfx.getUTF8Width("Remaining");
-    int labelY = 100;
-    u8g2gfx.setCursor(LEFT_W + (RIGHT_W - labelWidth) / 2, labelY);
-    u8g2gfx.print("Remaining");
-
-    strcpy(prevTimeStr, "99:99");
-    prevFreqIndex = currentFreqIndex;
-    treatmentScreenDrawn = true;
+    file.println();
   }
-
-  if (prevFreqIndex != currentFreqIndex) {
-    // Deactivate previous bar
-    if (prevFreqIndex >= 0 && prevFreqIndex < 10) {
-      int freq = diagnosis_frequencies[diagIdx][prevFreqIndex];
-      int y = BAR_Y0 + prevFreqIndex * BAR_H;
-      uint16_t barColor = (freq == 0) ? tft.color565(20,20,20) : ILI9341_DARKGREEN;
-      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 2, barColor);
-      u8g2gfx.setFont(u8g2_font_helvB14_te);
-      u8g2gfx.setBackgroundColor(barColor);
-      u8g2gfx.setForegroundColor(ILI9341_PINK);
-      char freqStr[8];
-      if (freq > 0) sprintf(freqStr, "%d", freq); else strcpy(freqStr, "-");
-      int textWidth = u8g2gfx.getUTF8Width(freqStr);
-      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 6, barColor);
-      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
-      u8g2gfx.print(freqStr);
-    }
-    // Activate new bar (only if non-zero)
-    if (currentFreqIndex >= 0 && currentFreqIndex < 10) {
-      int freq = diagnosis_frequencies[diagIdx][currentFreqIndex];
-      int y = BAR_Y0 + currentFreqIndex * BAR_H;
-      uint16_t barColor = (freq > 0) ? ILI9341_GREENYELLOW : tft.color565(20,20,20);
-      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 2, barColor);
-      if (freq > 0) tft.drawRect(BAR_X, y, BAR_W, BAR_H - 2, ILI9341_WHITE);
-      u8g2gfx.setFont(u8g2_font_helvB14_te);
-      u8g2gfx.setBackgroundColor(barColor);
-      u8g2gfx.setForegroundColor(ILI9341_PINK);
-      char freqStr[8];
-      if (freq > 0) sprintf(freqStr, "%d", freq); else strcpy(freqStr, "-");
-      int textWidth = u8g2gfx.getUTF8Width(freqStr);
-      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 6, barColor);
-      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
-      u8g2gfx.print(freqStr);
-    }
-    prevFreqIndex = currentFreqIndex;
-  }
-
-  // Countdown timer
-  unsigned long secondsLeft = msLeft / 1000;
-  if ((long)msLeft < 0) secondsLeft = 0;
-  int minLeft = secondsLeft / 60;
-  int secLeft = secondsLeft % 60;
-  char buf[6];
-  sprintf(buf, "%02d:%02d", minLeft, secLeft);
-
-  u8g2gfx.setFont(u8g2_font_fub42_tf);
-  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-  u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
-
-  int maxDigitW = 0;
-  for (char c = '0'; c <= '9'; c++) {
-    char tmp[2] = {c, 0};
-    int w = u8g2gfx.getUTF8Width(tmp);
-    if (w > maxDigitW) maxDigitW = w;
-  }
-  int colonW = u8g2gfx.getUTF8Width(":");
-  int totalW = maxDigitW * 4 + colonW;
-  int startX = LEFT_W + (RIGHT_W - totalW) / 2;
-  int cx = startX;
-  int charX[5], charW[5];
-  charX[0] = cx; charW[0] = maxDigitW; cx += maxDigitW;
-  charX[1] = cx; charW[1] = maxDigitW; cx += maxDigitW;
-  charX[2] = cx; charW[2] = colonW;    cx += colonW;
-  charX[3] = cx; charW[3] = maxDigitW; cx += maxDigitW;
-  charX[4] = cx; charW[4] = maxDigitW;
-
-  for (int i = 0; i < 5; i++) {
-    if (buf[i] != prevTimeStr[i] || (i == 2)) {
-      tft.fillRect(charX[i], 140, charW[i], 45, ILI9341_BLACK);
-      char tmp[2] = {buf[i], 0};
-      int actualW = u8g2gfx.getUTF8Width(tmp);
-      int offset = (charW[i] - actualW) / 2;
-      u8g2gfx.setCursor(charX[i] + offset, 180);
-      u8g2gfx.print(tmp);
-    }
-  }
-  strcpy(prevTimeStr, buf);
+  file.close();
 }
 
+void LoadDefaultDiagnoses() {
+  FreeDiagnosisArrays();
+
+  int n = sizeof(default_diagnoses_raw) / sizeof(default_diagnoses_raw[0]);
+  for (int i = 0; i < n; i++) {
+    int freqs[10];
+    for (int j = 0; j < 10; j++) {
+      freqs[j] = pgm_read_word(&frequencies[10 * i + j]);
+    }
+    if (!AddDiagnosis(default_diagnoses_raw[i], freqs)) {
+      DisplayErrorMessage("RAM full loading defaults", ILI9341_RED);
+      delay(2000);
+      break;
+    }
+  }
+}
+
+void InitializeSDAndSettings() {
+  if (!SD.begin(SD_CS)) {
+    DisplayErrorMessage("SD card is not present");
+    delay(3000);
+    LoadDefaultDiagnoses();
+    return;
+  }
+
+  File file = SD.open("settings.txt", FILE_READ);
+  bool fileWasMissing = !file;
+
+  if (fileWasMissing) {
+    DisplayErrorMessage("settings.txt missing - creating...", ILI9341_YELLOW);
+    delay(2000);
+    CreateDefaultSettingsFile();
+    DisplayErrorMessage("settings.txt created", ILI9341_GREEN);
+    delay(2000);
+    file = SD.open("settings.txt", FILE_READ);
+  }
+
+  if (!file) {
+    LoadDefaultDiagnoses();
+    return;
+  }
+
+  bool hasDiagnosesSection = false;
+  String currentSection = "";
+  FreeDiagnosisArrays();
+  bool diagnosesHealthy = true;
+  bool warnShown = false;
+
+  while (file.available()) {
+    String line = file.readStringUntil('\n');
+    line.trim();
+    if (line.startsWith("##") || line.length() == 0) continue;
+
+    if (line.startsWith("[")) {
+      currentSection = line;
+      if (line.indexOf("[diagnoses]") != -1) hasDiagnosesSection = true;
+      continue;
+    }
+
+    if (currentSection == "[diagnoses]") {
+      if (num_diagnoses == WARN_DIAGNOSES_THRESHOLD && !warnShown) {
+        DisplayErrorMessage("Diagnoses > 100, still loading...", ILI9341_YELLOW);
+        delay(2000);
+        warnShown = true;
+      }
+
+      int commaCount = 0;
+      for (unsigned int i = 0; i < line.length(); i++) {
+        if (line[i] == ',') commaCount++;
+      }
+      if (commaCount != 10) {
+        diagnosesHealthy = false;
+        debug("Bad comma count: "); debugln(line);
+        continue;
+      }
+
+      int firstComma = line.indexOf(',');
+      if (firstComma <= 0) {
+        diagnosesHealthy = false;
+        continue;
+      }
+
+      String nameWithTime = line.substring(0, firstComma);
+      nameWithTime.trim();
+
+      if (nameWithTime.indexOf(':') < 0) {
+        nameWithTime = nameWithTime + ":60";
+      }
+
+      bool freqOk = true;
+      int freqs[10];
+      int pos = firstComma + 1;
+      for (int f = 0; f < 10; f++) {
+        int nextComma = (f < 9) ? line.indexOf(',', pos) : (int)line.length();
+        if (nextComma == -1 && f < 9) { freqOk = false; break; }
+        String freqStr = line.substring(pos, nextComma);
+        freqStr.trim();
+        if (freqStr.length() == 0) { freqOk = false; break; }
+        bool isNum = true;
+        for (unsigned int k = 0; k < freqStr.length(); k++) {
+          if (!isdigit(freqStr[k])) { isNum = false; break; }
+        }
+        if (!isNum) { freqOk = false; break; }
+        freqs[f] = freqStr.toInt();
+        pos = nextComma + 1;
+      }
+
+      if (!freqOk) {
+        diagnosesHealthy = false;
+        debug("Bad freq in: "); debugln(line);
+        continue;
+      }
+
+      if (!AddDiagnosis(nameWithTime.c_str(), freqs)) {
+        DisplayErrorMessage("RAM exhausted, stopped loading", ILI9341_RED);
+        delay(2000);
+        break;
+      }
+    }
+  }
+  file.close();
+
+  if (!hasDiagnosesSection) {
+    DisplayErrorMessage("No [diagnoses] section - creating...", ILI9341_RED);
+    delay(3000);
+    CreateDefaultSettingsFile();
+    DisplayErrorMessage("[diagnoses] section created", ILI9341_GREEN);
+    delay(2000);
+    LoadDefaultDiagnoses();
+    return;
+  }
+
+  if (!diagnosesHealthy || num_diagnoses == 0) {
+    String err = (num_diagnoses == 0)
+                 ? "No diagnoses data"
+                 : "Some entries had bad format";
+    DisplayErrorMessage(err.c_str(), ILI9341_YELLOW);
+    delay(3000);
+
+    if (num_diagnoses == 0) {
+      CreateDefaultSettingsFile();
+      DisplayErrorMessage("Defaults recreated", ILI9341_GREEN);
+      delay(2000);
+      LoadDefaultDiagnoses();
+    }
+    return;
+  }
+}
+
+// LIST DRAWING
 void DrawList() {
   tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic);
@@ -1045,56 +933,192 @@ byte CalulatePageOffset(byte item) {
   return ((item - 1) / ITEMS_PER_PAGE) * ITEMS_PER_PAGE;
 }
 
-void DisplayIntroScreen(void) {
-  tft.fillScreen(ILI9341_BLUE);
-  DrawIntroFrame();
-  u8g2gfx.setFont(u8g2_font_helvB24_te);
-  u8g2gfx.setForegroundColor(GOLD2);
-  int textWidth = u8g2gfx.getUTF8Width("Dr. Royal Rife");
-  u8g2gfx.setCursor((320 - textWidth) / 2, 80);
-  u8g2gfx.print("Dr. Royal Rife");
-  textWidth = u8g2gfx.getUTF8Width("Healing Machine");
-  u8g2gfx.setCursor((320 - textWidth) / 2, 120);
-  u8g2gfx.print("Healing Machine");
-  DrawGoldenCrown(160, 135);
-  u8g2gfx.setFont(u8g2_font_7x14_tr);
-  u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
-  textWidth = u8g2gfx.getUTF8Width("by kd2cmo 2026");
-  u8g2gfx.setCursor((320 - textWidth) / 2, 190);
-  u8g2gfx.print("by kd2cmo 2026");
-  textWidth = u8g2gfx.getUTF8Width("Wait...");
-  u8g2gfx.setCursor((320 - textWidth) / 2, 210);
-  u8g2gfx.print("Wait...");
-}
 
-void DrawTitleBar() {
-  tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
+// ANGELZ SESSION
+void OpenAngelZ() {
+  tft.fillScreen(ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_t0_22b_tf);
   u8g2gfx.setBackgroundColor(ILI9341_BLUE);
   u8g2gfx.setForegroundColor(ILI9341_YELLOW);
-  int titleWidth = u8g2gfx.getUTF8Width(titleLine);
+  tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
+  int titleWidth = u8g2gfx.getUTF8Width("Angel-Z SESSION");
   u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
-  u8g2gfx.print(titleLine);
-}
+  u8g2gfx.print("Angel-Z session");
 
-void DrawBattery() {
-  float v = MeasureBatteryVoltage();
-  String s = String(v, 1) + "v";
-  u8g2gfx.setFont(u8g2_font_9x18B_tf);
-  u8g2gfx.setBackgroundColor(ILI9341_BLUE);
-  u8g2gfx.setForegroundColor(ILI9341_YELLOW);
-  int w = u8g2gfx.getUTF8Width(s.c_str());
-  u8g2gfx.setCursor(320 - w - 8, 23);
-  u8g2gfx.print(s.c_str());
-}
+  Sequences sequences(&gen);
 
-void SetSelectedItem(byte item) {
-  selectedItem = item;
-  pageOffset = CalulatePageOffset(item);
-  prevSelectedItem = item;
+  int currentStep = 0;
+  unsigned long sessionStart = millis();
+  for (int cycleNumber = 0; cycleNumber < ANGELZ_NUMBER_OF_CYCLES; ++cycleNumber) {
+    for (int pointNumber = 0; pointNumber < ANGELZ_TOTAL_POINTS; ++pointNumber) {
+      gen.EnableOutput(true);
+      sequences.Execute10khzSequence();
+      delay(3);
+      gen.EnableOutput(false);
+
+      int freqBarIndex = pointNumber * 24 / ANGELZ_TOTAL_POINTS;
+      unsigned long elapsed = millis() - sessionStart;
+      DisplayTreatInProgressScreenAngelZ(freqBarIndex, elapsed, (currentStep == 0));
+
+      float delayValue = sequences.GetDelaySequence(
+        pointNumber,
+        angelz_valueStart[cycleNumber],
+        angelz_valueMax[cycleNumber],
+        angelz_tau[cycleNumber],
+        ANGELZ_SPLIT_POINT
+      );
+      delay((unsigned long)delayValue);
+      currentStep++;
+    }
+  }
+
+  tft.fillScreen(ILI9341_BLACK);
+  u8g2gfx.setFont(u8g2_font_helvB24_te);
+  u8g2gfx.setForegroundColor(ILI9341_GREEN);
+  int textWidth = u8g2gfx.getUTF8Width("AngelZ Finished!");
+  u8g2gfx.setCursor((320 - textWidth) / 2, 120);
+  u8g2gfx.print("AngelZ Finished!");
+  delay(3000);
+
+  titleLine = (char*)"DIAGNOSES:";
+  DrawTitleBar();
+  DrawBattery();
   DrawList();
 }
 
+// GENERATE FREQUENCY - with absolute timing and pin 8 SIN/SQR
+bool GenerateFrequency() {
+  int diagIdx = selectedItem - 1;
+
+  int numFreq = 0;
+  int freqIndices[10];
+  for (int i = 0; i < 10; i++) {
+    if (diagnosis_frequencies[diagIdx][i] > 0) {
+      freqIndices[numFreq] = i;
+      numFreq++;
+    }
+  }
+  if (numFreq == 0) return false;
+
+  unsigned long secPerFreq = (unsigned long)diagnosis_time_sec[diagIdx];
+  unsigned long fragmentMs = secPerFreq * 1000UL;
+  unsigned long totalSessionMs = fragmentMs * numFreq;
+
+  unsigned long sessionStart = millis();
+
+  gen.EnableOutput(true);
+  digitalWrite(pinSignalType, isSineWave ? LOW : HIGH);
+
+  strComplete = (char*)"";
+  unsigned long lastSecond = 0;
+  prevFreqIndex = -1;
+  treatmentScreenDrawn = false;
+
+  for (int i = 0; i < numFreq; i++) {
+    unsigned long fragmentTargetEnd = (unsigned long)(i + 1) * fragmentMs;
+
+    intFreqToGenerate = diagnosis_frequencies[diagIdx][freqIndices[i]];
+
+    unsigned long elapsed = millis() - sessionStart;
+    unsigned long msLeft = (elapsed < totalSessionMs) ? (totalSessionMs - elapsed) : 0;
+
+    DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft, !treatmentScreenDrawn);
+    treatmentScreenDrawn = true;
+    UpdateSignalIndicator();
+
+    gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE, REG0, intFreqToGenerate);
+
+    while (isGeneratingFrequency) {
+      unsigned long now = millis();
+      unsigned long elapsedTotal = now - sessionStart;
+
+      if (elapsedTotal >= fragmentTargetEnd) break;
+
+      if (btnEnterPressed) {
+        gen.EnableOutput(false);
+        isSineWave = false;
+        digitalWrite(pinSignalType, HIGH);
+        return true;
+      }
+
+      if (encoderMoved) {
+        int8_t direction = AnalyzeEncoderChange();
+        if (direction > 0 && !isSineWave) {
+          isSineWave = true;
+          gen.ApplySignal(SINE_WAVE, REG0, intFreqToGenerate);
+          gen.SetOutputSource(REG0);
+          digitalWrite(pinSignalType, LOW);
+          UpdateSignalIndicator();
+        } else if (direction < 0 && isSineWave) {
+          isSineWave = false;
+          gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
+          digitalWrite(pinSignalType, HIGH);
+          UpdateSignalIndicator();
+        }
+      }
+
+      if (now - lastSecond >= 1000) {
+        unsigned long msLeft2 = (elapsedTotal < totalSessionMs) ? (totalSessionMs - elapsedTotal) : 0;
+        DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft2, false);
+        UpdateSignalIndicator();
+        lastSecond = now;
+      }
+    }
+
+    prevFreqIndex = freqIndices[i];
+
+    if (i < numFreq - 1) {
+      PlayTone(1);
+    }
+  }
+
+  // === SESSION COMPLETE ===
+  gen.EnableOutput(false);
+  isGeneratingFrequency = false;
+  isSineWave = false;
+  digitalWrite(pinSignalType, HIGH);
+
+  // Show "Finished!" screen with elapsed time
+  tft.fillScreen(ILI9341_BLACK);
+  u8g2gfx.setFont(u8g2_font_helvB24_te);
+  u8g2gfx.setForegroundColor(ILI9341_GREEN);
+  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+  int textWidth = u8g2gfx.getUTF8Width("Finished!");
+  u8g2gfx.setCursor((320 - textWidth) / 2, 120);
+  u8g2gfx.print("Finished!");
+
+  unsigned long actualElapsed = millis() - sessionStart;
+  int totalMin = (actualElapsed / 1000) / 60;
+  int totalSec = (actualElapsed / 1000) % 60;
+  char timeBuf[20];
+  sprintf(timeBuf, "Time: %02d:%02d", totalMin, totalSec);
+  u8g2gfx.setFont(u8g2_font_t0_22b_tf);
+  u8g2gfx.setForegroundColor(ILI9341_YELLOW);
+  int tw = u8g2gfx.getUTF8Width(timeBuf);
+  u8g2gfx.setCursor((320 - tw) / 2, 160);
+  u8g2gfx.print(timeBuf);
+
+  // Play completion beeps
+  PlayTone(3);
+
+  // Show Finished for 3 seconds
+  delay(3000);
+
+  // Set shutdown pins and return to list
+  strComplete = (char*)"";
+  titleLine = (char*)"DIAGNOSES:";
+  digitalWrite(pinShutdown1, LOW);
+  digitalWrite(pinShutdown2, HIGH);
+
+  // Return to list view
+  DrawTitleBar();
+  DrawBattery();
+  DrawList();
+
+  return false;
+}
+
+// BUTTON HANDLING
 void ProcessButtonClick() {
   if (!isGeneratingFrequency) {
     EEPROM.update(eepromAddress, selectedItem);
@@ -1136,6 +1160,8 @@ void Shutdown() {
   debugln("Shutdown initiated");
 }
 
+
+// ENCODER AND BUTTON INTERRUPTS
 void OnScrollChange() {
   encoderMoved = true;
 }
@@ -1196,120 +1222,7 @@ void OnButtonPress() {
   }
 }
 
-// ==== AngelZ ====
-class Sequences {
-  private:
-    AD9833 *m_pgen;
-  public:
-    Sequences() {}
-    Sequences(AD9833 *pGen);
-    void Execute10khzSequence();
-    float GetDelaySequence(int currentPoint, float valueStart, float valueMax, float tau, int splitPoint);
-};
-
-const float ANGELZ_DELAY_SCALE = 3.734f;
-
-Sequences::Sequences(AD9833 *pGen) : m_pgen(pGen) {}
-
-void Sequences::Execute10khzSequence() {
-  for (int pulseNum = 0; pulseNum < 20; pulseNum++) {
-    m_pgen->EnableOutput(true);
-    m_pgen->ApplySignal(SQUARE_WAVE, REG0, 10000);
-  }
-}
-
-float Sequences::GetDelaySequence(int currentPoint, float valueStart, float valueMax, float tau, int splitPoint) {
-  float delayMs;
-  if (currentPoint < splitPoint) {
-    delayMs = valueStart + (valueMax - valueStart) * (1 - exp(-currentPoint / tau));
-  } else {
-    delayMs = valueMax * exp(-(currentPoint - splitPoint) / tau);
-  }
-  return delayMs * ANGELZ_DELAY_SCALE;
-}
-
-#define   ANGELZ_TOTAL_POINTS       48
-const int ANGELZ_SPLIT_POINT      = 24;
-const int ANGELZ_NUMBER_OF_CYCLES = 59;
-
-float angelz_valueStart[ANGELZ_NUMBER_OF_CYCLES] = {
-  20.0, 15.0, 18.0, 25.0, 22.0, 30.0, 21.0, 35.0, 23.0, 40.0,
-  24.0, 45.0, 16.0, 27.0, 19.0, 31.0, 13.0, 28.0, 14.0, 34.0,
-  12.0, 39.0, 10.0, 42.0, 11.0, 37.0, 9.0, 33.0, 8.0, 36.0,
-  7.0, 29.0, 6.0, 32.0, 5.0, 38.0, 4.0, 41.0, 3.0, 44.0,
-  2.0, 43.0, 1.0, 46.0, 0.5, 48.0, 0.2, 50.0, 0.1, 52.0,
-  0.0, 53.0, 12.0, 17.0, 22.0, 28.0, 34.0, 41.0, 45.0
-};
-
-float angelz_valueMax[ANGELZ_NUMBER_OF_CYCLES] = {
-  52.6, 45.0, 55.0, 60.0, 50.0, 65.0, 53.0, 70.0, 56.0, 75.0,
-  59.0, 80.0, 48.0, 62.0, 51.0, 64.0, 49.0, 67.0, 50.0, 71.0,
-  46.0, 73.0, 47.0, 76.0, 54.0, 78.0, 57.0, 79.0, 58.0, 82.0,
-  61.0, 85.0, 63.0, 88.0, 65.0, 90.0, 68.0, 92.0, 66.0, 95.0,
-  69.0, 97.0, 72.0, 99.0, 74.0, 100.0, 77.0, 102.0, 80.0, 105.0,
-  82.0, 110.0, 55.0, 60.0, 65.0, 70.0, 75.0, 85.0, 90.0
-};
-
-float angelz_tau[ANGELZ_NUMBER_OF_CYCLES] = {
-  5.0, 7.0, 4.5, 6.0, 3.5, 5.5, 4.0, 6.5, 3.0, 5.0,
-  4.3, 6.8, 3.8, 6.1, 3.2, 6.4, 4.2, 5.6, 3.9, 6.7,
-  4.4, 5.9, 4.1, 6.9, 3.6, 5.7, 3.3, 6.3, 3.1, 6.2,
-  4.6, 6.6, 3.7, 5.8, 4.9, 7.0, 3.4, 6.5, 4.8, 7.1,
-  5.1, 7.2, 3.9, 6.0, 3.5, 6.8, 4.2, 6.3, 5.0, 7.3,
-  5.2, 7.4, 4.0, 5.5, 6.0, 6.5, 5.7, 6.8, 7.1
-};
-
-void OpenAngelZ() {
-  tft.fillScreen(ILI9341_BLACK);
-  u8g2gfx.setFont(u8g2_font_t0_22b_tf);
-  u8g2gfx.setBackgroundColor(ILI9341_BLUE);
-  u8g2gfx.setForegroundColor(ILI9341_YELLOW);
-  tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
-  int titleWidth = u8g2gfx.getUTF8Width("Angel-Z SESSION");
-  u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
-  u8g2gfx.print("Angel-Z session");
-
-  Sequences sequences(&gen);
-
-  int currentStep = 0;
-  unsigned long sessionStart = millis();
-  for (int cycleNumber = 0; cycleNumber < ANGELZ_NUMBER_OF_CYCLES; ++cycleNumber) {
-    for (int pointNumber = 0; pointNumber < ANGELZ_TOTAL_POINTS; ++pointNumber) {
-      gen.EnableOutput(true);
-      sequences.Execute10khzSequence();
-      delay(3);
-      gen.EnableOutput(false);
-
-      int freqBarIndex = pointNumber * 24 / ANGELZ_TOTAL_POINTS;
-      unsigned long elapsed = millis() - sessionStart;
-      DisplayTreatInProgressScreenAngelZ(freqBarIndex, elapsed, (currentStep == 0));
-
-      float delayValue = sequences.GetDelaySequence(
-        pointNumber,
-        angelz_valueStart[cycleNumber],
-        angelz_valueMax[cycleNumber],
-        angelz_tau[cycleNumber],
-        ANGELZ_SPLIT_POINT
-      );
-      delay((unsigned long)delayValue);
-      currentStep++;
-    }
-  }
-
-  tft.fillScreen(ILI9341_BLACK);
-  u8g2gfx.setFont(u8g2_font_helvB24_te);
-  u8g2gfx.setForegroundColor(ILI9341_GREEN);
-  int textWidth = u8g2gfx.getUTF8Width("AngelZ Finished!");
-  u8g2gfx.setCursor((320 - textWidth) / 2, 120);
-  u8g2gfx.print("AngelZ Finished!");
-  delay(3000);
-
-  titleLine = (char*)"DIAGNOSES:";
-  DrawTitleBar();
-  DrawBattery();
-  DrawList();
-}
-
+// DECORATIVE DRAWING
 void DrawIntroFrame() {
   tft.fillRoundRect(FRAME_X, FRAME_Y, FRAME_W, FRAME_H, 24, GOLD1);
   tft.drawRoundRect(FRAME_X+5, FRAME_Y+5, FRAME_W-10, FRAME_H-10, 18, GOLD3);
@@ -1375,6 +1288,8 @@ void DrawGoldenCrown(int cx, int topY) {
   tft.drawPixel(centerX, peakBaseY - centerH + 2, GOLD4);
 }
 
+
+// UTILITY
 float MeasureBatteryVoltage() {
   int raw = analogRead(pinBatteryLevel);
   float voltage = (raw * referenceVoltage) / 1024.0;
@@ -1387,5 +1302,67 @@ void PlayTone(int n) {
     delay(PEIZO_BEEP_LENGTH);
     noTone(pinBeepOut);
     delay(PEIZO_BEEP_PAUSE);
+  }
+}
+
+// SETUP
+void setup() {
+  Serial.begin(9600);
+  tft.begin();
+  tft.setRotation(1);
+  tft.fillScreen(ILI9341_BLACK);
+  u8g2gfx.begin(tft);
+  u8g2gfx.setFontMode(1);
+  u8g2gfx.setFontDirection(0);
+  u8g2gfx.setForegroundColor(ILI9341_GREEN);
+  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+  pinMode(pinShutdown1, OUTPUT);
+  pinMode(pinShutdown2, OUTPUT);
+  pinMode(pinSignalType, OUTPUT);
+  digitalWrite(pinShutdown1, HIGH);
+  digitalWrite(pinShutdown2, LOW);
+  digitalWrite(pinSignalType, HIGH);
+  pinMode(pinEncoderCW,  INPUT_PULLUP);
+  pinMode(pinEncoderCCW, INPUT_PULLUP);
+  pinMode(pinBtnEnter,   INPUT_PULLUP);
+  gen.Begin();
+  gen.EnableOutput(false);
+
+  DisplayIntroScreen();
+  delay(2500);
+
+  InitializeSDAndSettings();
+
+  DrawTitleBar();
+  DrawBattery();
+  DrawList();
+  attachInterrupt(digitalPinToInterrupt(pinEncoderCW),  OnScrollChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnScrollChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(pinBtnEnter),   OnButtonPress,  CHANGE);
+  byte saved = EEPROM.read(eepromAddress);
+  if (saved >= 1 && (int)saved <= num_diagnoses) {
+    SetSelectedItem(saved);
+  } else {
+    SetSelectedItem(1);
+  }
+}
+
+// MAIN LOOP
+void loop() {
+  if (encoderMoved) {
+    int8_t direction = AnalyzeEncoderChange();
+    if (direction != 0) {
+      if (!isGeneratingFrequency) {
+        ScrollItem(direction > 0 ? SCROLL_UP : SCROLL_DOWN);
+      }
+    }
+  }
+
+  if (btnEnterPressed) {
+    switch (buttonOutput) {
+      case STATE_SHORT: ProcessButtonClick(); buttonOutput = STATE_NORMAL; break;
+      case STATE_LONG:  Shutdown();           buttonOutput = STATE_NORMAL; break;
+    }
+    btnEnterPressed = false;
   }
 }
