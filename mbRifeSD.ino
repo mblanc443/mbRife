@@ -1,8 +1,8 @@
-// Complete Rife Machine Project - Arduino Mega2560 + ILI9341 + AD9833
+// Complete Rife Machine Project - Arduino Mega2560 + ILI9341 + AD9833 + SD card + AngelZ
 // Dynamic diagnosis arrays, format Name:time,freq1..freq10
 // Pin 8 signal type indicator, SD card support, AngelZ unchanged
-// Absolute timing for accurate session countdown
-
+// Pin A1 connected to output which measures level of output signal during treatment
+// VU-style level indicator: 10 vertical bars, 7 green + 3 red, gray when no signal
 #include <EEPROM.h>
 #include <AD9833.h>
 #include <SPI.h>
@@ -46,6 +46,7 @@ AD9833 gen(pinGenCS);
 #define pinSignalType    8
 #define pinBtnEnter     21
 #define pinBatteryLevel A0
+#define pinLevelInput    A1
 
 // Gold color palette
 #define GOLD1  tft.color565(255, 215, 0)
@@ -53,46 +54,23 @@ AD9833 gen(pinGenCS);
 #define GOLD3  tft.color565(184, 134, 11)
 #define GOLD4  tft.color565(255, 236, 139)
 
+// Level indicator VU colors
+#define LEVEL_GREEN_ACTIVE   tft.color565(0, 220, 0)     // active green bar
+#define LEVEL_GREEN_DIM      tft.color565(0, 60, 0)      // dim green (below level)
+#define LEVEL_RED_ACTIVE     tft.color565(255, 30, 30)    // active red bar
+#define LEVEL_RED_DIM        tft.color565(60, 0, 0)       // dim red (below level)
+#define LEVEL_GRAY_NOSIGNAL  tft.color565(80, 80, 80)     // gray when no signal
+#define LEVEL_BAR_OUTLINE    tft.color565(30, 30, 30)     // bar outline/gap color
+#define LEVEL_DIG_BG         tft.color565(30, 30, 30)     // digital readout bg
+
 // Battery voltage divider
 const float R1 = 32000.0;
 const float R2 = 8000.0;
 const float referenceVoltage = 5.0;
 
 // Default diagnosis names with time per frequency in seconds
-// Format: "Name:seconds" e.g. "Good Sleep:120" = 2 min per non-zero freq
 const char* default_diagnoses_raw[] = {
   "Good Sleep:120",
-  "Alcoholism:60",
-  "Angina:60",
-  "Stomachache:60",
-  "General Pain:60",
-  "Headaches:60",
-  "Infection:60",
-  "Acute pain:60",
-  "Back pain:60",
-  "Arthralgia:60",
-  "Toothache:60",
-  "No appetite:60",
-  "No taste:60",
-  "Motion sickness:60",
-  "Hoarseness:60",
-  "Gastric Ulcer:60",
-  "Prostate ailments:60",
-  "Deafness:60",
-  "Flu:60",
-  "Hemorrhoids:60",
-  "Kidney stones:60",
-  "Cough:60",
-  "Runny nose:60",
-  "Hair loss:60",
-  "Hypertension:60",
-  "Low pressure:60",
-  "Thyroid Gland Disease:60",
-  "Bad breath:60",
-  "Herpes:60",
-  "Epilepsy:60",
-  "Constipation:60",
-  "Dizziness:60",
   "Accending 1:60",
   "Accending 2:60",
   "H.Clark Zapper:60",
@@ -102,37 +80,6 @@ const char* default_diagnoses_raw[] = {
 // Frequencies in PROGMEM
 const int frequencies[] PROGMEM = {
   6,5,4,0,0,0,0,0,0,0,
-  10000,0,0,0,0,0,0,0,0,0,
-  787,776,727,690,465,428,660,0,0,0,
-  10000,3000,95,0,0,0,0,0,0,0,
-  3000,2720,95,666,80,40,0,0,0,0,
-  10000,144,160,520,304,0,0,0,0,0,
-  3000,95,880,1550,802,787,776,727,0,0,
-  3000,95,10000,1550,802,880,787,727,690,666,
-  787,784,776,728,727,465,432,0,0,0,
-  160,500,1600,5000,324,528,0,0,0,0,
-  5170,3000,2720,2489,1800,1600,1550,880,832,666,
-  10000,465,444,1865,125,95,72,880,787,727,
-  10000,20,0,0,0,0,0,0,0,0,
-  10000,5000,648,624,600,465,440,648,444,1865,
-  880,760,727,0,0,0,0,0,0,0,
-  10000,1550,802,880,832,787,727,465,0,0,
-  2050,880,1550,802,787,727,465,20,0,0,
-  10000,1550,880,802,787,727,20,0,0,0,
-  954,889,841,787,763,753,742,523,513,482,
-  4474,6117,774,1550,447,880,802,727,0,0,
-  10000,444,727,787,880,6000,3000,1552,0,0,
-  7760,7344,3702,3672,1550,1500,1234,776,766,728,
-  1800,1713,1550,802,800,880,787,727,444,20,
-  10000,5000,2720,2170,1552,880,800,787,727,465,
-  10000,3176,2112,95,324,528,880,787,727,304,
-  727,787,880,0,0,0,0,0,0,0,
-  16000,10000,160,80,35,0,0,0,0,0,
-  1550,802,880,787,727,0,0,0,0,0,
-  2950,1900,1577,1550,1489,1488,629,464,450,383,
-  10000,880,802,787,727,700,650,600,210,125,
-  3176,1550,880,832,802,787,776,727,444,422,
-  1550,880,802,784,787,786,766,522,727,72,
   528,432,0,0,0,0,0,0,0,0,
   963,852,741,639,528,528,417,396,285,174,
   32000,1150,0,0,0,0,0,0,0,0,
@@ -190,9 +137,25 @@ const int LIST_Y_START    = 50;
 const int ITEM_HEIGHT     = 24;
 const int TITLE_BAR_HIGHT = 30;
 
+// Level indicator constants - VU style with 10 vertical bars
+#define LEVEL_BAR_Y        230
+#define LEVEL_BAR_H        10
+#define LEVEL_NUM_BARS     10
+#define LEVEL_TOTAL_W      240          // total width for bars area
+#define LEVEL_BAR_WIDTH    (LEVEL_TOTAL_W / LEVEL_NUM_BARS)  // 24px per bar
+#define LEVEL_BAR_GAP      2            // gap between bars
+#define LEVEL_GREEN_BARS   7            // bars 0-6 are green
+#define LEVEL_RED_BARS     3            // bars 7-9 are red
+#define LEVEL_DIGITAL_X    240          // 80px right side for text
+#define LEVEL_MAX_VALUE    10
+#define LEVEL_MIN_VALUE    1
+
 static int  prevFreqIndex        =      -1;
 static char prevTimeStr[6]       = "99:99";
 static char prevAngelZTimeStr[6] = "00:00";
+static int  prevLevelValue       =     -1;
+static int  prevLevelBars        =     -1;  // how many bars are lit
+static bool prevLevelNoSignal    =   true;  // true = gray/no signal mode
 static bool treatmentScreenDrawn =   false;
 
 // ==== AngelZ Constants ====
@@ -260,6 +223,9 @@ void LoadDefaultDiagnoses();
 void CreateDefaultSettingsFile();
 void InitializeSDAndSettings();
 unsigned long GetTotalSessionMs(int diagIndex);
+int  ReadLevelValue();
+void DrawLevelIndicator(int level, bool noSignal, bool forceFull = false);
+void ClearLevelIndicatorArea();
 
 
 // AngelZ Sequences Class
@@ -399,6 +365,144 @@ unsigned long GetTotalSessionMs(int diagIndex) {
 }
 
 // ============================================================
+// LEVEL INDICATOR - VU Style with 10 Vertical Bars
+// 7 green (bars 0-6) + 3 red (bars 7-9)
+// Gray when no signal
+// ============================================================
+int ReadLevelValue() {
+  long sum = 0;
+  for (int i = 0; i < 4; i++) sum += analogRead(pinLevelInput);
+  int avg = sum >> 2;
+  int val = map(avg, 0, 1023, 0, LEVEL_NUM_BARS);
+  if (val < 0) val = 0;
+  if (val > LEVEL_NUM_BARS) val = LEVEL_NUM_BARS;
+  return val;
+}
+
+void ClearLevelIndicatorArea() {
+  tft.fillRect(0, LEVEL_BAR_Y, 320, LEVEL_BAR_H, ILI9341_BLACK);
+  prevLevelValue = -1;
+  prevLevelBars = -1;
+  prevLevelNoSignal = true;
+}
+
+void DrawLevelIndicator(int level, bool noSignal, bool forceFull) {
+  // level: 0 to LEVEL_NUM_BARS (0 = nothing lit, 10 = all lit)
+  // noSignal: true = show all bars as gray
+
+  int litBars = level;  // how many bars are lit (0-10)
+  if (litBars < 0) litBars = 0;
+  if (litBars > LEVEL_NUM_BARS) litBars = LEVEL_NUM_BARS;
+
+  bool needFullRedraw = forceFull || (noSignal != prevLevelNoSignal);
+
+  if (needFullRedraw) {
+    // Draw all 10 bars from scratch
+    for (int i = 0; i < LEVEL_NUM_BARS; i++) {
+      int x = i * LEVEL_BAR_WIDTH;
+      int barW = LEVEL_BAR_WIDTH - LEVEL_BAR_GAP;
+      uint16_t color;
+
+      if (noSignal) {
+        // All bars gray when no signal
+        color = LEVEL_GRAY_NOSIGNAL;
+      } else if (i < litBars) {
+        // Bar is lit
+        if (i < LEVEL_GREEN_BARS) {
+          color = LEVEL_GREEN_ACTIVE;
+        } else {
+          color = LEVEL_RED_ACTIVE;
+        }
+      } else {
+        // Bar is dim (above current level)
+        if (i < LEVEL_GREEN_BARS) {
+          color = LEVEL_GREEN_DIM;
+        } else {
+          color = LEVEL_RED_DIM;
+        }
+      }
+
+      tft.fillRect(x, LEVEL_BAR_Y, barW, LEVEL_BAR_H, color);
+    }
+
+    // Digital area
+    tft.fillRect(LEVEL_DIGITAL_X, LEVEL_BAR_Y, 80, LEVEL_BAR_H, LEVEL_DIG_BG);
+    u8g2gfx.setFont(u8g2_font_7x14_tr);
+    u8g2gfx.setBackgroundColor(LEVEL_DIG_BG);
+    if (noSignal) {
+      u8g2gfx.setForegroundColor(LEVEL_GRAY_NOSIGNAL);
+      const char* noSigStr = "No Signal";
+      int tw = u8g2gfx.getUTF8Width(noSigStr);
+      int tx = LEVEL_DIGITAL_X + (80 - tw) / 2;
+      u8g2gfx.setCursor(tx, LEVEL_BAR_Y + 8);
+      u8g2gfx.print(noSigStr);
+    } else {
+      if (litBars >= 8) {
+        u8g2gfx.setForegroundColor(LEVEL_RED_ACTIVE);
+      } else {
+        u8g2gfx.setForegroundColor(ILI9341_WHITE);
+      }
+      char digBuf[12];
+      sprintf(digBuf, "Level: %d", litBars);
+      int tw = u8g2gfx.getUTF8Width(digBuf);
+      int tx = LEVEL_DIGITAL_X + (80 - tw) / 2;
+      u8g2gfx.setCursor(tx, LEVEL_BAR_Y + 8);
+      u8g2gfx.print(digBuf);
+    }
+
+    prevLevelBars = litBars;
+    prevLevelValue = level;
+    prevLevelNoSignal = noSignal;
+    return;
+  }
+
+  // Incremental update - only redraw bars that changed state
+  if (!noSignal && litBars != prevLevelBars) {
+    int fromBar = min(litBars, prevLevelBars);
+    int toBar = max(litBars, prevLevelBars);
+    if (prevLevelBars < 0) { fromBar = 0; toBar = LEVEL_NUM_BARS; }
+
+    for (int i = fromBar; i < toBar; i++) {
+      int x = i * LEVEL_BAR_WIDTH;
+      int barW = LEVEL_BAR_WIDTH - LEVEL_BAR_GAP;
+      uint16_t color;
+
+      if (i < litBars) {
+        // Light up
+        color = (i < LEVEL_GREEN_BARS) ? LEVEL_GREEN_ACTIVE : LEVEL_RED_ACTIVE;
+      } else {
+        // Dim
+        color = (i < LEVEL_GREEN_BARS) ? LEVEL_GREEN_DIM : LEVEL_RED_DIM;
+      }
+
+      tft.fillRect(x, LEVEL_BAR_Y, barW, LEVEL_BAR_H, color);
+    }
+
+    prevLevelBars = litBars;
+  }
+
+  // Update digital readout if value changed
+  if (!noSignal && (level != prevLevelValue || forceFull)) {
+    tft.fillRect(LEVEL_DIGITAL_X, LEVEL_BAR_Y, 80, LEVEL_BAR_H, LEVEL_DIG_BG);
+    u8g2gfx.setFont(u8g2_font_7x14_tr);
+    u8g2gfx.setBackgroundColor(LEVEL_DIG_BG);
+    if (litBars >= 8) {
+      u8g2gfx.setForegroundColor(LEVEL_RED_ACTIVE);
+    } else {
+      u8g2gfx.setForegroundColor(ILI9341_WHITE);
+    }
+    char digBuf[12];
+    sprintf(digBuf, "Level: %d", litBars);
+    int tw = u8g2gfx.getUTF8Width(digBuf);
+    int tx = LEVEL_DIGITAL_X + (80 - tw) / 2;
+    u8g2gfx.setCursor(tx, LEVEL_BAR_Y + 8);
+    u8g2gfx.print(digBuf);
+    prevLevelValue = level;
+  }
+}
+
+
+// ============================================================
 // DISPLAY HELPER FUNCTIONS
 // ============================================================
 void DisplayErrorMessage(const char* message, uint16_t color) {
@@ -474,13 +578,13 @@ void SetSelectedItem(byte item) {
 }
 
 
-// TREATMENT IN-PROGRESS SCREEN
+// TREATMENT IN-PROGRESS SCREEN (regular) - with VU level bars
 void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned long msLeft, bool forceFull) {
   const int SCREEN_W = 320;
   const int SCREEN_H = 240;
   const int LEFT_W = SCREEN_W / 3;
   const int RIGHT_W = SCREEN_W - LEFT_W;
-  const int BAR_H = (SCREEN_H - TITLE_BAR_HIGHT) / 10;
+  const int BAR_H = ((SCREEN_H - TITLE_BAR_HIGHT - LEVEL_BAR_H) / 10);
   const int BAR_W = LEFT_W - 8;
   const int BAR_X = 4;
   const int BAR_Y0 = TITLE_BAR_HIGHT;
@@ -515,9 +619,9 @@ void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned lo
         barColor = (i == currentFreqIndex) ? ILI9341_GREENYELLOW : ILI9341_DARKGREEN;
       }
       uint16_t borderColor = (i == currentFreqIndex && freq > 0) ? ILI9341_WHITE : barColor;
-      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 2, barColor);
+      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 1, barColor);
       if (i == currentFreqIndex && freq > 0)
-        tft.drawRect(BAR_X, y, BAR_W, BAR_H - 2, borderColor);
+        tft.drawRect(BAR_X, y, BAR_W, BAR_H - 1, borderColor);
       u8g2gfx.setFont(u8g2_font_helvB14_te);
       u8g2gfx.setBackgroundColor(barColor);
       u8g2gfx.setForegroundColor(ILI9341_PINK);
@@ -525,10 +629,13 @@ void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned lo
       if (freq > 0) sprintf(freqStr, "%d", freq);
       else strcpy(freqStr, "-");
       int textWidth = u8g2gfx.getUTF8Width(freqStr);
-      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 6, barColor);
+      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 4, barColor);
       u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
       u8g2gfx.print(freqStr);
     }
+
+    // Draw VU level indicator (full) - initially show "no signal" gray
+    DrawLevelIndicator(0, true, true);
 
     u8g2gfx.setFont(u8g2_font_helvB24_te);
     u8g2gfx.setBackgroundColor(ILI9341_BLACK);
@@ -548,14 +655,14 @@ void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned lo
       int freq = diagnosis_frequencies[diagIdx][prevFreqIndex];
       int y = BAR_Y0 + prevFreqIndex * BAR_H;
       uint16_t barColor = (freq == 0) ? tft.color565(20, 20, 20) : ILI9341_DARKGREEN;
-      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 2, barColor);
+      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 1, barColor);
       u8g2gfx.setFont(u8g2_font_helvB14_te);
       u8g2gfx.setBackgroundColor(barColor);
       u8g2gfx.setForegroundColor(ILI9341_PINK);
       char freqStr[8];
       if (freq > 0) sprintf(freqStr, "%d", freq); else strcpy(freqStr, "-");
       int textWidth = u8g2gfx.getUTF8Width(freqStr);
-      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 6, barColor);
+      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 4, barColor);
       u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
       u8g2gfx.print(freqStr);
     }
@@ -563,20 +670,24 @@ void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned lo
       int freq = diagnosis_frequencies[diagIdx][currentFreqIndex];
       int y = BAR_Y0 + currentFreqIndex * BAR_H;
       uint16_t barColor = (freq > 0) ? ILI9341_GREENYELLOW : tft.color565(20, 20, 20);
-      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 2, barColor);
-      if (freq > 0) tft.drawRect(BAR_X, y, BAR_W, BAR_H - 2, ILI9341_WHITE);
+      tft.fillRect(BAR_X, y, BAR_W, BAR_H - 1, barColor);
+      if (freq > 0) tft.drawRect(BAR_X, y, BAR_W, BAR_H - 1, ILI9341_WHITE);
       u8g2gfx.setFont(u8g2_font_helvB14_te);
       u8g2gfx.setBackgroundColor(barColor);
       u8g2gfx.setForegroundColor(ILI9341_PINK);
       char freqStr[8];
       if (freq > 0) sprintf(freqStr, "%d", freq); else strcpy(freqStr, "-");
       int textWidth = u8g2gfx.getUTF8Width(freqStr);
-      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 6, barColor);
+      tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 4, barColor);
       u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
       u8g2gfx.print(freqStr);
     }
     prevFreqIndex = currentFreqIndex;
   }
+
+  // Update VU level indicator (reads A1 each call) - active signal mode
+  int lv = ReadLevelValue();
+  DrawLevelIndicator(lv, false, false);
 
   unsigned long secondsLeft = msLeft / 1000;
   if ((long)msLeft < 0) secondsLeft = 0;
@@ -620,10 +731,11 @@ void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned lo
 }
 
 
-// ANGELZ TREATMENT SCREEN
+// ANGELZ TREATMENT SCREEN - no level indicator, clean screen
 void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msLeft, bool forceFull) {
   static bool titleDrawn = false;
   if (forceFull || !titleDrawn) {
+    // Clear entire screen including level bar area
     tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
     u8g2gfx.setFont(u8g2_font_t0_22b_tf);
     u8g2gfx.setBackgroundColor(ILI9341_BLUE);
@@ -934,9 +1046,10 @@ byte CalulatePageOffset(byte item) {
 }
 
 
-// ANGELZ SESSION
+// ANGELZ SESSION - clean screen, no level indicator
 void OpenAngelZ() {
-  tft.fillScreen(ILI9341_BLACK);
+  tft.fillScreen(ILI9341_BLACK);  // <<< Full clean including bottom bar
+
   u8g2gfx.setFont(u8g2_font_t0_22b_tf);
   u8g2gfx.setBackgroundColor(ILI9341_BLUE);
   u8g2gfx.setForegroundColor(ILI9341_YELLOW);
@@ -944,6 +1057,11 @@ void OpenAngelZ() {
   int titleWidth = u8g2gfx.getUTF8Width("Angel-Z SESSION");
   u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
   u8g2gfx.print("Angel-Z session");
+
+  // Reset level indicator state so it redraws properly when returning
+  prevLevelValue = -1;
+  prevLevelBars = -1;
+  prevLevelNoSignal = true;
 
   Sequences sequences(&gen);
 
@@ -986,7 +1104,7 @@ void OpenAngelZ() {
   DrawList();
 }
 
-// GENERATE FREQUENCY - with absolute timing and pin 8 SIN/SQR
+// GENERATE FREQUENCY
 bool GenerateFrequency() {
   int diagIdx = selectedItem - 1;
 
@@ -1012,6 +1130,9 @@ bool GenerateFrequency() {
   strComplete = (char*)"";
   unsigned long lastSecond = 0;
   prevFreqIndex = -1;
+  prevLevelValue = -1;
+  prevLevelBars = -1;
+  prevLevelNoSignal = true;
   treatmentScreenDrawn = false;
 
   for (int i = 0; i < numFreq; i++) {
@@ -1072,13 +1193,11 @@ bool GenerateFrequency() {
     }
   }
 
-  // === SESSION COMPLETE ===
   gen.EnableOutput(false);
   isGeneratingFrequency = false;
   isSineWave = false;
   digitalWrite(pinSignalType, HIGH);
 
-  // Show "Finished!" screen with elapsed time
   tft.fillScreen(ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_helvB24_te);
   u8g2gfx.setForegroundColor(ILI9341_GREEN);
@@ -1098,19 +1217,14 @@ bool GenerateFrequency() {
   u8g2gfx.setCursor((320 - tw) / 2, 160);
   u8g2gfx.print(timeBuf);
 
-  // Play completion beeps
   PlayTone(3);
-
-  // Show Finished for 3 seconds
   delay(3000);
 
-  // Set shutdown pins and return to list
   strComplete = (char*)"";
   titleLine = (char*)"DIAGNOSES:";
   digitalWrite(pinShutdown1, LOW);
   digitalWrite(pinShutdown2, HIGH);
 
-  // Return to list view
   DrawTitleBar();
   DrawBattery();
   DrawList();
@@ -1288,7 +1402,6 @@ void DrawGoldenCrown(int cx, int topY) {
   tft.drawPixel(centerX, peakBaseY - centerH + 2, GOLD4);
 }
 
-
 // UTILITY
 float MeasureBatteryVoltage() {
   int raw = analogRead(pinBatteryLevel);
@@ -1325,6 +1438,7 @@ void setup() {
   pinMode(pinEncoderCW,  INPUT_PULLUP);
   pinMode(pinEncoderCCW, INPUT_PULLUP);
   pinMode(pinBtnEnter,   INPUT_PULLUP);
+  pinMode(pinLevelInput, INPUT);
   gen.Begin();
   gen.EnableOutput(false);
 
