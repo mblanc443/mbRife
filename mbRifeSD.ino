@@ -1,8 +1,8 @@
-// Complete Rife Machine Project - Arduino Mega2560 + ILI9341 + AD9833 + SD card + AngelZ
-// Dynamic diagnosis arrays, format Name:time,freq1..freq10
+// Rife Machine - Arduino Mega2560 + ILI9341 + AD9833 + SD card + AngelZ
 // Pin 8 signal type indicator, SD card support, AngelZ unchanged
 // Pin A1 connected to output which measures level of output signal during treatment
-// VU-style level indicator: 10 vertical bars, 7 green + 3 red, gray when no signal
+// VU-style level indicator: 20 vertical bars, 14 green + 6 red, gray when no signal
+// ADC for A1 powered by internal reference voltage (commented out lines 1456-1457)
 #include <EEPROM.h>
 #include <AD9833.h>
 #include <SPI.h>
@@ -55,13 +55,13 @@ AD9833 gen(pinGenCS);
 #define GOLD4  tft.color565(255, 236, 139)
 
 // Level indicator VU colors
-#define LEVEL_GREEN_ACTIVE   tft.color565(0, 220, 0)     // active green bar
-#define LEVEL_GREEN_DIM      tft.color565(0, 60, 0)      // dim green (below level)
-#define LEVEL_RED_ACTIVE     tft.color565(255, 30, 30)    // active red bar
-#define LEVEL_RED_DIM        tft.color565(60, 0, 0)       // dim red (below level)
-#define LEVEL_GRAY_NOSIGNAL  tft.color565(80, 80, 80)     // gray when no signal
-#define LEVEL_BAR_OUTLINE    tft.color565(30, 30, 30)     // bar outline/gap color
-#define LEVEL_DIG_BG         tft.color565(30, 30, 30)     // digital readout bg
+#define LEVEL_GREEN_ACTIVE   tft.color565(0, 220, 0)
+#define LEVEL_GREEN_DIM      tft.color565(0, 60, 0)
+#define LEVEL_RED_ACTIVE     tft.color565(255, 30, 30)
+#define LEVEL_RED_DIM        tft.color565(60, 0, 0)
+#define LEVEL_GRAY_NOSIGNAL  tft.color565(80, 80, 80)
+#define LEVEL_BAR_OUTLINE    tft.color565(30, 30, 30)
+#define LEVEL_DIG_BG         tft.color565(30, 30, 30)
 
 // Battery voltage divider
 const float R1 = 32000.0;
@@ -137,25 +137,27 @@ const int LIST_Y_START    = 50;
 const int ITEM_HEIGHT     = 24;
 const int TITLE_BAR_HIGHT = 30;
 
-// Level indicator constants - VU style with 10 vertical bars
-#define LEVEL_BAR_Y        230
-#define LEVEL_BAR_H        10
-#define LEVEL_NUM_BARS     10
-#define LEVEL_TOTAL_W      240          // total width for bars area
-#define LEVEL_BAR_WIDTH    (LEVEL_TOTAL_W / LEVEL_NUM_BARS)  // 24px per bar
-#define LEVEL_BAR_GAP      2            // gap between bars
-#define LEVEL_GREEN_BARS   7            // bars 0-6 are green
-#define LEVEL_RED_BARS     3            // bars 7-9 are red
-#define LEVEL_DIGITAL_X    240          // 80px right side for text
-#define LEVEL_MAX_VALUE    10
+// Level indicator constants - VU style with 20 vertical bars
+// Indicator spans full screen width (320px), level text above bars
+#define LEVEL_LABEL_Y      210
+#define LEVEL_LABEL_H      18
+#define LEVEL_BAR_Y        228
+#define LEVEL_BAR_H        12
+#define LEVEL_NUM_BARS     20
+#define LEVEL_TOTAL_W      320
+#define LEVEL_BAR_WIDTH    (LEVEL_TOTAL_W / LEVEL_NUM_BARS)
+#define LEVEL_BAR_GAP      2
+#define LEVEL_GREEN_BARS   14
+#define LEVEL_RED_BARS     6
+#define LEVEL_MAX_VALUE    20
 #define LEVEL_MIN_VALUE    1
 
 static int  prevFreqIndex        =      -1;
 static char prevTimeStr[6]       = "99:99";
 static char prevAngelZTimeStr[6] = "00:00";
 static int  prevLevelValue       =     -1;
-static int  prevLevelBars        =     -1;  // how many bars are lit
-static bool prevLevelNoSignal    =   true;  // true = gray/no signal mode
+static int  prevLevelBars        =     -1;
+static bool prevLevelNoSignal    =   true;
 static bool treatmentScreenDrawn =   false;
 
 // ==== AngelZ Constants ====
@@ -365,9 +367,11 @@ unsigned long GetTotalSessionMs(int diagIndex) {
 }
 
 // ============================================================
-// LEVEL INDICATOR - VU Style with 10 Vertical Bars
-// 7 green (bars 0-6) + 3 red (bars 7-9)
+// LEVEL INDICATOR - VU Style with 20 Vertical Bars
+// 14 green (bars 0-13) + 6 red (bars 14-19)
 // Gray when no signal
+// "Level: X" displayed above bars in larger font, centered
+// Indicator spans full 320px screen width
 // ============================================================
 int ReadLevelValue() {
   long sum = 0;
@@ -380,41 +384,34 @@ int ReadLevelValue() {
 }
 
 void ClearLevelIndicatorArea() {
-  tft.fillRect(0, LEVEL_BAR_Y, 320, LEVEL_BAR_H, ILI9341_BLACK);
+  tft.fillRect(0, LEVEL_LABEL_Y, 320, (LEVEL_BAR_Y + LEVEL_BAR_H) - LEVEL_LABEL_Y, ILI9341_BLACK);
   prevLevelValue = -1;
   prevLevelBars = -1;
   prevLevelNoSignal = true;
 }
 
 void DrawLevelIndicator(int level, bool noSignal, bool forceFull) {
-  // level: 0 to LEVEL_NUM_BARS (0 = nothing lit, 10 = all lit)
-  // noSignal: true = show all bars as gray
-
-  int litBars = level;  // how many bars are lit (0-10)
+  int litBars = level;
   if (litBars < 0) litBars = 0;
   if (litBars > LEVEL_NUM_BARS) litBars = LEVEL_NUM_BARS;
 
   bool needFullRedraw = forceFull || (noSignal != prevLevelNoSignal);
 
   if (needFullRedraw) {
-    // Draw all 10 bars from scratch
     for (int i = 0; i < LEVEL_NUM_BARS; i++) {
       int x = i * LEVEL_BAR_WIDTH;
       int barW = LEVEL_BAR_WIDTH - LEVEL_BAR_GAP;
       uint16_t color;
 
       if (noSignal) {
-        // All bars gray when no signal
         color = LEVEL_GRAY_NOSIGNAL;
       } else if (i < litBars) {
-        // Bar is lit
         if (i < LEVEL_GREEN_BARS) {
           color = LEVEL_GREEN_ACTIVE;
         } else {
           color = LEVEL_RED_ACTIVE;
         }
       } else {
-        // Bar is dim (above current level)
         if (i < LEVEL_GREEN_BARS) {
           color = LEVEL_GREEN_DIM;
         } else {
@@ -425,28 +422,26 @@ void DrawLevelIndicator(int level, bool noSignal, bool forceFull) {
       tft.fillRect(x, LEVEL_BAR_Y, barW, LEVEL_BAR_H, color);
     }
 
-    // Digital area
-    tft.fillRect(LEVEL_DIGITAL_X, LEVEL_BAR_Y, 80, LEVEL_BAR_H, LEVEL_DIG_BG);
-    u8g2gfx.setFont(u8g2_font_7x14_tr);
-    u8g2gfx.setBackgroundColor(LEVEL_DIG_BG);
+    // Draw label above bars
+    tft.fillRect(0, LEVEL_LABEL_Y, 320, LEVEL_LABEL_H, ILI9341_BLACK);
+    u8g2gfx.setFont(u8g2_font_helvB14_te);
+    u8g2gfx.setBackgroundColor(ILI9341_BLACK);
     if (noSignal) {
       u8g2gfx.setForegroundColor(LEVEL_GRAY_NOSIGNAL);
       const char* noSigStr = "No Signal";
       int tw = u8g2gfx.getUTF8Width(noSigStr);
-      int tx = LEVEL_DIGITAL_X + (80 - tw) / 2;
-      u8g2gfx.setCursor(tx, LEVEL_BAR_Y + 8);
+      u8g2gfx.setCursor((320 - tw) / 2, LEVEL_LABEL_Y + 15);
       u8g2gfx.print(noSigStr);
     } else {
-      if (litBars >= 8) {
+      if (litBars >= 16) {
         u8g2gfx.setForegroundColor(LEVEL_RED_ACTIVE);
       } else {
         u8g2gfx.setForegroundColor(ILI9341_WHITE);
       }
-      char digBuf[12];
+      char digBuf[16];
       sprintf(digBuf, "Level: %d", litBars);
       int tw = u8g2gfx.getUTF8Width(digBuf);
-      int tx = LEVEL_DIGITAL_X + (80 - tw) / 2;
-      u8g2gfx.setCursor(tx, LEVEL_BAR_Y + 8);
+      u8g2gfx.setCursor((320 - tw) / 2, LEVEL_LABEL_Y + 15);
       u8g2gfx.print(digBuf);
     }
 
@@ -468,10 +463,8 @@ void DrawLevelIndicator(int level, bool noSignal, bool forceFull) {
       uint16_t color;
 
       if (i < litBars) {
-        // Light up
         color = (i < LEVEL_GREEN_BARS) ? LEVEL_GREEN_ACTIVE : LEVEL_RED_ACTIVE;
       } else {
-        // Dim
         color = (i < LEVEL_GREEN_BARS) ? LEVEL_GREEN_DIM : LEVEL_RED_DIM;
       }
 
@@ -481,21 +474,20 @@ void DrawLevelIndicator(int level, bool noSignal, bool forceFull) {
     prevLevelBars = litBars;
   }
 
-  // Update digital readout if value changed
+  // Update label if value changed
   if (!noSignal && (level != prevLevelValue || forceFull)) {
-    tft.fillRect(LEVEL_DIGITAL_X, LEVEL_BAR_Y, 80, LEVEL_BAR_H, LEVEL_DIG_BG);
-    u8g2gfx.setFont(u8g2_font_7x14_tr);
-    u8g2gfx.setBackgroundColor(LEVEL_DIG_BG);
-    if (litBars >= 8) {
+    tft.fillRect(0, LEVEL_LABEL_Y, 320, LEVEL_LABEL_H, ILI9341_BLACK);
+    u8g2gfx.setFont(u8g2_font_helvB14_te);
+    u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+    if (litBars >= 16) {
       u8g2gfx.setForegroundColor(LEVEL_RED_ACTIVE);
     } else {
       u8g2gfx.setForegroundColor(ILI9341_WHITE);
     }
-    char digBuf[12];
+    char digBuf[16];
     sprintf(digBuf, "Level: %d", litBars);
     int tw = u8g2gfx.getUTF8Width(digBuf);
-    int tx = LEVEL_DIGITAL_X + (80 - tw) / 2;
-    u8g2gfx.setCursor(tx, LEVEL_BAR_Y + 8);
+    u8g2gfx.setCursor((320 - tw) / 2, LEVEL_LABEL_Y + 15);
     u8g2gfx.print(digBuf);
     prevLevelValue = level;
   }
@@ -578,13 +570,17 @@ void SetSelectedItem(byte item) {
 }
 
 
+// ============================================================
 // TREATMENT IN-PROGRESS SCREEN (regular) - with VU level bars
+// Title bar shows "<diagnose>:<configured_time>" (static, drawn once)
+// ============================================================
 void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned long msLeft, bool forceFull) {
   const int SCREEN_W = 320;
   const int SCREEN_H = 240;
   const int LEFT_W = SCREEN_W / 3;
   const int RIGHT_W = SCREEN_W - LEFT_W;
-  const int BAR_H = ((SCREEN_H - TITLE_BAR_HIGHT - LEVEL_BAR_H) / 10);
+  const int BAR_AREA_H = LEVEL_LABEL_Y - TITLE_BAR_HIGHT;
+  const int BAR_H = BAR_AREA_H / 10;
   const int BAR_W = LEFT_W - 8;
   const int BAR_X = 4;
   const int BAR_Y0 = TITLE_BAR_HIGHT;
@@ -593,14 +589,21 @@ void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned lo
 
   if (forceFull || !treatmentScreenDrawn) {
     tft.fillScreen(ILI9341_BLACK);
+
+    // Title bar: "<diagnose>:<configured_time>" - static, drawn once
     tft.fillRect(0, 0, SCREEN_W, TITLE_BAR_HIGHT, ILI9341_BLUE);
-    u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic);
+    u8g2gfx.setFont(u8g2_font_helvB14_te);
     u8g2gfx.setBackgroundColor(ILI9341_BLUE);
     u8g2gfx.setForegroundColor(ILI9341_YELLOW);
-    int titleWidth = u8g2gfx.getUTF8Width(titleLine);
-    u8g2gfx.setCursor((SCREEN_W - titleWidth) / 2, 24);
-    u8g2gfx.print(titleLine);
+    char titleBuf[48];
+    snprintf(titleBuf, sizeof(titleBuf), "%s:%d", diagnosis_names[diagIdx], diagnosis_time_sec[diagIdx]);
+    int titleWidth = u8g2gfx.getUTF8Width(titleBuf);
+    int titleX = (SCREEN_W - titleWidth) / 2;
+    if (titleX < 2) titleX = 2;
+    u8g2gfx.setCursor(titleX, 22);
+    u8g2gfx.print(titleBuf);
 
+    // Signal type indicator on title bar
     u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic);
     u8g2gfx.setBackgroundColor(ILI9341_BLUE);
     u8g2gfx.setForegroundColor(ILI9341_YELLOW);
@@ -689,6 +692,7 @@ void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned lo
   int lv = ReadLevelValue();
   DrawLevelIndicator(lv, false, false);
 
+  // Countdown timer (big digits on right side)
   unsigned long secondsLeft = msLeft / 1000;
   if ((long)msLeft < 0) secondsLeft = 0;
   int minLeft = secondsLeft / 60;
@@ -735,7 +739,6 @@ void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned lo
 void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msLeft, bool forceFull) {
   static bool titleDrawn = false;
   if (forceFull || !titleDrawn) {
-    // Clear entire screen including level bar area
     tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
     u8g2gfx.setFont(u8g2_font_t0_22b_tf);
     u8g2gfx.setBackgroundColor(ILI9341_BLUE);
@@ -1048,7 +1051,7 @@ byte CalulatePageOffset(byte item) {
 
 // ANGELZ SESSION - clean screen, no level indicator
 void OpenAngelZ() {
-  tft.fillScreen(ILI9341_BLACK);  // <<< Full clean including bottom bar
+  tft.fillScreen(ILI9341_BLACK);
 
   u8g2gfx.setFont(u8g2_font_t0_22b_tf);
   u8g2gfx.setBackgroundColor(ILI9341_BLUE);
@@ -1058,7 +1061,6 @@ void OpenAngelZ() {
   u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
   u8g2gfx.print("Angel-Z session");
 
-  // Reset level indicator state so it redraws properly when returning
   prevLevelValue = -1;
   prevLevelBars = -1;
   prevLevelNoSignal = true;
@@ -1129,6 +1131,7 @@ bool GenerateFrequency() {
 
   strComplete = (char*)"";
   unsigned long lastSecond = 0;
+  unsigned long lastLevelUpdate = 0;
   prevFreqIndex = -1;
   prevLevelValue = -1;
   prevLevelBars = -1;
@@ -1178,6 +1181,14 @@ bool GenerateFrequency() {
         }
       }
 
+      // Update level indicator at 50ms intervals (fast refresh)
+      if (now - lastLevelUpdate >= 50) {
+        int lv = ReadLevelValue();
+        DrawLevelIndicator(lv, false, false);
+        lastLevelUpdate = now;
+      }
+
+      // Update countdown every second
       if (now - lastSecond >= 1000) {
         unsigned long msLeft2 = (elapsedTotal < totalSessionMs) ? (totalSessionMs - elapsedTotal) : 0;
         DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft2, false);
@@ -1439,6 +1450,12 @@ void setup() {
   pinMode(pinEncoderCCW, INPUT_PULLUP);
   pinMode(pinBtnEnter,   INPUT_PULLUP);
   pinMode(pinLevelInput, INPUT);
+
+  // Use internal 1.1V reference for ADC on A1 (more sensitive for low-level signals)
+  // Uncomment the following two lines to enable internal reference for pin A1 readings:
+  // analogReference(INTERNAL1V1);  // Set ADC reference to internal 1.1V bandgap  
+  // analogRead(pinLevelInput);     // Dummy read to settle ADC after ref change    
+
   gen.Begin();
   gen.EnableOutput(false);
 
