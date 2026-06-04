@@ -43,10 +43,11 @@ AD9833 gen(pinGenCS);
 #define pinBeepOut       4
 #define pinShutdown2     5
 #define pinShutdown1     6
+#define pinSDPower       7 
 #define pinSignalType    8
 #define pinBtnEnter     21
 #define pinBatteryLevel A0
-#define pinLevelInput    A1
+#define pinLevelInput   A1
 
 // Gold color palette
 #define GOLD1  tft.color565(255, 215, 0)
@@ -70,18 +71,18 @@ const float referenceVoltage = 5.0;
 
 // Default diagnosis names with time per frequency in seconds
 const char* default_diagnoses_raw[] = {
-  "Good Sleep:120",
-  "Accending 1:60",
-  "Accending 2:60",
-  "H.Clark Zapper:60",
+  "Day1-Love expands:780",  //light radiates
+  "Day2-Cellular and DNA repair:480",
+  "Day3-Release Fear, let go:660",
+  "H.Clark Zapper:120",
   "AngelZ:0"
 };
 
 // Frequencies in PROGMEM
 const int frequencies[] PROGMEM = {
-  6,5,4,0,0,0,0,0,0,0,
-  528,432,0,0,0,0,0,0,0,0,
-  963,852,741,639,528,528,417,396,285,174,
+  465,0,0,0,0,0,0,0,0,0,
+  528,0,0,0,0,0,0,0,0,0,
+  417,0,0,0,0,0,0,0,0,0, 
   32000,1150,0,0,0,0,0,0,0,0,
   0,0,0,0,0,0,0,0,0,0
 };
@@ -116,7 +117,7 @@ char* strComplete     = (char*)"";
 
 bool isGeneratingFrequency = false;
 uint16_t intFreqToGenerate = 0;
-bool isSineWave            = false;
+bool isSineWave            = true;   // *** CHANGED *** default SIN instead of Square
 
 volatile bool encoderMoved    = false;
 volatile bool btnEnterPressed = false;
@@ -140,30 +141,30 @@ const int TITLE_BAR_HIGHT = 30;
 // Level indicator constants - VU style with 20 vertical bars
 // Indicator spans full screen width (320px), level text above bars
 #define LEVEL_LABEL_Y      210
-#define LEVEL_LABEL_H      18
+#define LEVEL_LABEL_H       18
 #define LEVEL_BAR_Y        228
-#define LEVEL_BAR_H        12
-#define LEVEL_NUM_BARS     20
+#define LEVEL_BAR_H         12
+#define LEVEL_NUM_BARS      20
 #define LEVEL_TOTAL_W      320
 #define LEVEL_BAR_WIDTH    (LEVEL_TOTAL_W / LEVEL_NUM_BARS)
-#define LEVEL_BAR_GAP      2
-#define LEVEL_GREEN_BARS   14
-#define LEVEL_RED_BARS     6
-#define LEVEL_MAX_VALUE    20
-#define LEVEL_MIN_VALUE    1
+#define LEVEL_BAR_GAP        2
+#define LEVEL_GREEN_BARS    14
+#define LEVEL_RED_BARS       6
+#define LEVEL_MAX_VALUE     20
+#define LEVEL_MIN_VALUE      1
 
 static int  prevFreqIndex        =      -1;
 static char prevTimeStr[6]       = "99:99";
 static char prevAngelZTimeStr[6] = "00:00";
-static int  prevLevelValue       =     -1;
-static int  prevLevelBars        =     -1;
-static bool prevLevelNoSignal    =   true;
+static int  prevLevelValue       =      -1;
+static int  prevLevelBars        =      -1;
+static bool prevLevelNoSignal    =    true;
 static bool treatmentScreenDrawn =   false;
 
 // ==== AngelZ Constants ====
-#define   ANGELZ_TOTAL_POINTS       48
-const int ANGELZ_SPLIT_POINT      = 24;
-const int ANGELZ_NUMBER_OF_CYCLES = 59;
+#define   ANGELZ_TOTAL_POINTS           48
+const int ANGELZ_SPLIT_POINT      =     24;
+const int ANGELZ_NUMBER_OF_CYCLES =     59;
 const float ANGELZ_DELAY_SCALE    = 3.734f;
 
 float angelz_valueStart[ANGELZ_NUMBER_OF_CYCLES] = {
@@ -366,13 +367,7 @@ unsigned long GetTotalSessionMs(int diagIndex) {
   return (unsigned long)diagnosis_time_sec[diagIndex] * count * 1000UL;
 }
 
-// ============================================================
 // LEVEL INDICATOR - VU Style with 20 Vertical Bars
-// 14 green (bars 0-13) + 6 red (bars 14-19)
-// Gray when no signal
-// "Level: X" displayed above bars in larger font, centered
-// Indicator spans full 320px screen width
-// ============================================================
 int ReadLevelValue() {
   long sum = 0;
   for (int i = 0; i < 4; i++) sum += analogRead(pinLevelInput);
@@ -496,7 +491,6 @@ void DrawLevelIndicator(int level, bool noSignal, bool forceFull) {
 
 // ============================================================
 // DISPLAY HELPER FUNCTIONS
-// ============================================================
 void DisplayErrorMessage(const char* message, uint16_t color) {
   tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_8x13_t_cyrillic);
@@ -570,10 +564,8 @@ void SetSelectedItem(byte item) {
 }
 
 
-// ============================================================
 // TREATMENT IN-PROGRESS SCREEN (regular) - with VU level bars
 // Title bar shows "<diagnose>:<configured_time>" (static, drawn once)
-// ============================================================
 void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned long msLeft, bool forceFull) {
   const int SCREEN_W = 320;
   const int SCREEN_H = 240;
@@ -1160,8 +1152,8 @@ bool GenerateFrequency() {
 
       if (btnEnterPressed) {
         gen.EnableOutput(false);
-        isSineWave = false;
-        digitalWrite(pinSignalType, HIGH);
+        isSineWave = true;                     // *** CHANGED *** reset to default SIN
+        digitalWrite(pinSignalType, LOW);       // *** CHANGED *** LOW for SIN default
         return true;
       }
 
@@ -1206,8 +1198,8 @@ bool GenerateFrequency() {
 
   gen.EnableOutput(false);
   isGeneratingFrequency = false;
-  isSineWave = false;
-  digitalWrite(pinSignalType, HIGH);
+  isSineWave = true;                           // *** CHANGED *** reset to default SIN
+  digitalWrite(pinSignalType, LOW);             // *** CHANGED *** LOW for SIN default
 
   tft.fillScreen(ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_helvB24_te);
@@ -1443,9 +1435,11 @@ void setup() {
   pinMode(pinShutdown1, OUTPUT);
   pinMode(pinShutdown2, OUTPUT);
   pinMode(pinSignalType, OUTPUT);
+  pinMode(pinSDPower, OUTPUT);                  // *** ADDED *** SD card FET power control
   digitalWrite(pinShutdown1, HIGH);
   digitalWrite(pinShutdown2, LOW);
-  digitalWrite(pinSignalType, HIGH);
+  digitalWrite(pinSignalType, LOW);             // *** CHANGED *** LOW for SIN default
+  digitalWrite(pinSDPower, HIGH);               // *** ADDED *** initially power OFF to SD card
   pinMode(pinEncoderCW,  INPUT_PULLUP);
   pinMode(pinEncoderCCW, INPUT_PULLUP);
   pinMode(pinBtnEnter,   INPUT_PULLUP);
@@ -1462,7 +1456,10 @@ void setup() {
   DisplayIntroScreen();
   delay(2500);
 
+  digitalWrite(pinSDPower, LOW);                // *** ADDED *** power ON SD card before loading
+  delay(100);                                   // *** ADDED *** brief delay for SD card power stabilization
   InitializeSDAndSettings();
+  digitalWrite(pinSDPower, HIGH);               // *** ADDED *** power OFF SD card after loading
 
   DrawTitleBar();
   DrawBattery();
