@@ -2,7 +2,7 @@
 // Pin 8 signal type indicator, SD card support, AngelZ unchanged
 // Pin A1 connected to output which measures level of output signal during treatment
 // VU-style level indicator: 20 vertical bars, 14 green + 6 red, gray when no signal
-// ADC for A1 powered by internal reference voltage (commented out lines 1456-1457)
+// ADC for A1 powered by internal reference voltage (commented out lines 1450-1451)
 #include <EEPROM.h>
 #include <AD9833.h>
 #include <SPI.h>
