@@ -1447,8 +1447,8 @@ void setup() {
 
   // Use internal 1.1V reference for ADC on A1 (more sensitive for low-level signals)
   // Uncomment the following two lines to enable internal reference for pin A1 readings:
-  // analogReference(INTERNAL1V1);  // Set ADC reference to internal 1.1V bandgap  
-  // analogRead(pinLevelInput);     // Dummy read to settle ADC after ref change    
+  analogReference(INTERNAL1V1);  // Set ADC reference to internal 1.1V bandgap  
+  analogRead(pinLevelInput);     // Dummy read to settle ADC after ref change    
 
   gen.Begin();
   gen.EnableOutput(false);
