@@ -32,7 +32,7 @@
 #define pinSDPower       7 
 #define pinSignalType    8
 #define pinGenCS         9
-#define pinSDcardCS     10  // SD cs
+#define SD_CS           10  // SD cs
 #define pinOutputPause  11  // blocks output signal between frequencies to remove spikes
 #define pinBtnEnter     21
 #define pinBatteryLevel A0
