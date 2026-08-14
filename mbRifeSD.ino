@@ -1094,9 +1094,9 @@ bool GenerateFrequency() {
 
   unsigned long sessionStart = millis();
 
-  gen.EnableOutput(true);
+  //gen.EnableOutput(true);
   digitalWrite(pinSignalType, isSineWave ? LOW : HIGH);
-  digitalWrite(pinOutputPause, LOW);  // Start paused
+  //digitalWrite(pinOutputPause, LOW);  // Start 
 
   unsigned long lastSecond = 0;
   unsigned long lastLevelUpdate = 0;
@@ -1169,10 +1169,10 @@ bool GenerateFrequency() {
         lastSecond = now;
       }
     }
-
-    // FREQUENCY FRAGMENT ENDS - Set pin 11 LOW (pause output)
-    digitalWrite(pinOutputPause, LOW);
+    
     gen.EnableOutput(false);
+    // FREQUENCY FRAGMENT ENDS - Set pin 11 LOW
+    digitalWrite(pinOutputPause, LOW);
 
     prevFreqIndex = freqIndices[i];
 
