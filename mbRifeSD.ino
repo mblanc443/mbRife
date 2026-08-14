@@ -3,6 +3,7 @@
 // Pin A1 connected to output which measures level of output signal during treatment
 // VU-style level indicator: 20 vertical bars, 14 green + 6 red, gray when no signal
 // ADC for A1 powered by internal reference voltage (commented out lines 1450-1451)
+
 #include <EEPROM.h>
 #include <AD9833.h>
 #include <SPI.h>
@@ -22,21 +23,6 @@
   #define debugln(x)
 #endif
 
-// ILI9341 Pins (Hardware SPI on Mega: SCK=52, MOSI=51)
-#define TFT_CS          53
-#define TFT_DC          48
-#define TFT_RST         49
-
-Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
-U8G2_FOR_ADAFRUIT_GFX u8g2gfx;
-
-// AD9833
-#define pinGenCS         9
-AD9833 gen(pinGenCS);
-
-// SD Card
-#define SD_CS           10
-
 // Pins
 #define pinEncoderCW     2
 #define pinEncoderCCW    3
@@ -45,28 +31,43 @@ AD9833 gen(pinGenCS);
 #define pinShutdown1     6
 #define pinSDPower       7 
 #define pinSignalType    8
+#define pinGenCS         9
+#define pinSDcardCS     10  // SD cs
+#define pinOutputPause  11  // blocks output signal between frequencies to remove spikes
 #define pinBtnEnter     21
 #define pinBatteryLevel A0
 #define pinLevelInput   A1
+#define TFT_CS          53
+#define TFT_DC          48
+#define TFT_RST         49
+
+// ILI9341 (Hardware SPI on Mega: SCK=52, MOSI=51)
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
+U8G2_FOR_ADAFRUIT_GFX u8g2gfx;
+
+// AD9833
+AD9833 gen(pinGenCS);
 
 // Gold color palette
-#define GOLD1  tft.color565(255, 215, 0)
-#define GOLD2  tft.color565(218, 165, 32)
-#define GOLD3  tft.color565(184, 134, 11)
+#define GOLD1  tft.color565(255, 215,   0)
+#define GOLD2  tft.color565(218, 165,  32)
+#define GOLD3  tft.color565(184, 134,  11)
 #define GOLD4  tft.color565(255, 236, 139)
 
 // Level indicator VU colors
-#define LEVEL_GREEN_ACTIVE   tft.color565(0, 220, 0)
-#define LEVEL_GREEN_DIM      tft.color565(0, 60, 0)
+#define LEVEL_GREEN_ACTIVE   tft.color565(0,  220,  0)
+#define LEVEL_GREEN_DIM      tft.color565(0,   60,  0)
 #define LEVEL_RED_ACTIVE     tft.color565(255, 30, 30)
-#define LEVEL_RED_DIM        tft.color565(60, 0, 0)
-#define LEVEL_GRAY_NOSIGNAL  tft.color565(80, 80, 80)
-#define LEVEL_BAR_OUTLINE    tft.color565(30, 30, 30)
-#define LEVEL_DIG_BG         tft.color565(30, 30, 30)
+#define LEVEL_RED_DIM        tft.color565(60,   0,  0)
+#define LEVEL_GRAY_NOSIGNAL  tft.color565(80,  80, 80)
+
+// capacity
+#define WARN_DIAGNOSES_THRESHOLD 100
+#define NAME_MAX_LEN              28
 
 // Battery voltage divider
-const float R1 = 32000.0;
-const float R2 = 8000.0;
+const float R1 = 32000.0; // ohm
+const float R2 = 8000.0;  // ohm
 const float referenceVoltage = 5.0;
 
 // Default diagnosis names with time per frequency in seconds
@@ -94,9 +95,6 @@ int      **diagnosis_frequencies = NULL;
 int      num_diagnoses           = 0;
 int      capacity_diagnoses      = 0;
 
-#define WARN_DIAGNOSES_THRESHOLD 100
-#define NAME_MAX_LEN 28
-
 const int SCROLL_DOWN = 0;
 const int SCROLL_UP   = 1;
 const int ONE_BEEP    = 1;
@@ -116,16 +114,16 @@ char* titleLine       = (char*)"DIAGNOSES:";
 char* strComplete     = (char*)"";
 
 bool isGeneratingFrequency = false;
-uint16_t intFreqToGenerate = 0;
-bool isSineWave            = true;   // *** CHANGED *** default SIN instead of Square
+uint16_t intFreqToGenerate =     0;
+bool isSineWave            =  true;   // *** CHANGED *** default SIN instead of Square
 
 volatile bool encoderMoved    = false;
 volatile bool btnEnterPressed = false;
-volatile int  buttonOutput    = 0;
+volatile int  buttonOutput    =     0;
 
 enum {STATE_NORMAL, STATE_SHORT, STATE_LONG};
 long LONG_DELTA     = 1500UL;
-long DEBOUNCE_DELTA = 30UL;
+long DEBOUNCE_DELTA =   30UL;
 
 byte eepromAddress = 0;
 
@@ -162,10 +160,10 @@ static bool prevLevelNoSignal    =    true;
 static bool treatmentScreenDrawn =   false;
 
 // ==== AngelZ Constants ====
-#define   ANGELZ_TOTAL_POINTS           48
-const int ANGELZ_SPLIT_POINT      =     24;
-const int ANGELZ_NUMBER_OF_CYCLES =     59;
-const float ANGELZ_DELAY_SCALE    = 3.734f;
+#define     ANGELZ_TOTAL_POINTS           48
+const int   ANGELZ_SPLIT_POINT      =     24;
+const int   ANGELZ_NUMBER_OF_CYCLES =     59;
+const float ANGELZ_DELAY_SCALE      = 3.734f;
 
 float angelz_valueStart[ANGELZ_NUMBER_OF_CYCLES] = {
   20.0, 15.0, 18.0, 25.0, 22.0, 30.0, 21.0, 35.0, 23.0, 40.0,
@@ -323,7 +321,7 @@ void FreeDiagnosisArrays() {
 
 bool AddDiagnosis(const char* nameWithTime, const int* freqs) {
   if (!EnsureDiagnosisCapacity()) return false;
-
+  //
   if (num_diagnoses == WARN_DIAGNOSES_THRESHOLD) {
     DisplayErrorMessage("Diagnoses count exceeded 100 - continuing...", ILI9341_YELLOW);
     delay(2000);
@@ -847,7 +845,7 @@ void LoadDefaultDiagnoses() {
 }
 
 void InitializeSDAndSettings() {
-  if (!SD.begin(SD_CS)) {
+  if (!SD.begin()) {
     DisplayErrorMessage("SD card is not present");
     delay(3000);
     LoadDefaultDiagnoses();
@@ -1099,11 +1097,12 @@ void OpenAngelZ() {
 }
 
 // GENERATE FREQUENCY
+/*
 bool GenerateFrequency() {
   int diagIdx = selectedItem - 1;
-
   int numFreq = 0;
   int freqIndices[10];
+
   for (int i = 0; i < 10; i++) {
     if (diagnosis_frequencies[diagIdx][i] > 0) {
       freqIndices[numFreq] = i;
@@ -1148,12 +1147,12 @@ bool GenerateFrequency() {
       unsigned long now = millis();
       unsigned long elapsedTotal = now - sessionStart;
 
-      if (elapsedTotal >= fragmentTargetEnd) break;
+      if (elapsedTotal >= fragmentTargetEnd) break; 
 
       if (btnEnterPressed) {
         gen.EnableOutput(false);
-        isSineWave = true;                     // *** CHANGED *** reset to default SIN
-        digitalWrite(pinSignalType, LOW);       // *** CHANGED *** LOW for SIN default
+        isSineWave = true;                     // reset to default SIN
+        digitalWrite(pinSignalType, LOW);      // LOW for SIN default
         return true;
       }
 
@@ -1198,8 +1197,218 @@ bool GenerateFrequency() {
 
   gen.EnableOutput(false);
   isGeneratingFrequency = false;
-  isSineWave = true;                           // *** CHANGED *** reset to default SIN
-  digitalWrite(pinSignalType, LOW);             // *** CHANGED *** LOW for SIN default
+  isSineWave = true;                           // reset to default SIN
+  digitalWrite(pinSignalType, LOW);            // LOW for SIN default
+
+  tft.fillScreen(ILI9341_BLACK);
+  u8g2gfx.setFont(u8g2_font_helvB24_te);
+  u8g2gfx.setForegroundColor(ILI9341_GREEN);
+  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+  int textWidth = u8g2gfx.getUTF8Width("Finished!");
+  u8g2gfx.setCursor((320 - textWidth) / 2, 120);
+  u8g2gfx.print("Finished!");
+
+  unsigned long actualElapsed = millis() - sessionStart;
+  int totalMin = (actualElapsed / 1000) / 60;
+  int totalSec = (actualElapsed / 1000) % 60;
+  char timeBuf[20];
+  sprintf(timeBuf, "Time: %02d:%02d", totalMin, totalSec);
+  u8g2gfx.setFont(u8g2_font_t0_22b_tf);
+  u8g2gfx.setForegroundColor(ILI9341_YELLOW);
+  int tw = u8g2gfx.getUTF8Width(timeBuf);
+  u8g2gfx.setCursor((320 - tw) / 2, 160);
+  u8g2gfx.print(timeBuf);
+
+  PlayTone(3);
+  delay(3000);
+
+  strComplete = (char*)"";
+  titleLine = (char*)"DIAGNOSES:";
+  digitalWrite(pinShutdown1, LOW);
+  digitalWrite(pinShutdown2, HIGH);
+
+  DrawTitleBar();
+  DrawBattery();
+  DrawList();
+
+  return false;
+} */
+
+bool GenerateFrequency() {
+  int diagIdx = selectedItem - 1;
+  int numFreq = 0;
+  int freqIndices[10];
+
+  for (int i = 0; i < 10; i++) {
+    if (diagnosis_frequencies[diagIdx][i] > 0) {
+      freqIndices[numFreq] = i;
+      numFreq++;
+    }
+  }
+  if (numFreq == 0) return false;
+
+  unsigned long secPerFreq = (unsigned long)diagnosis_time_sec[diagIdx];
+  unsigned long fragmentMs = secPerFreq * 1000UL;
+  unsigned long totalSessionMs = fragmentMs * numFreq;
+
+  // Account for pause time between frequencies (500ms per transition)
+  unsigned long totalPauseMs = (numFreq > 1) ? (unsigned long)(numFreq - 1) * 500UL : 0UL;
+  unsigned long totalSessionWithPausesMs = totalSessionMs + totalPauseMs;
+
+  unsigned long sessionStart = millis();
+
+  gen.EnableOutput(true);
+  digitalWrite(pinSignalType, isSineWave ? LOW : HIGH);
+  digitalWrite(pinOutputPause, LOW);  // ensure output is enabled at start
+
+  strComplete = (char*)"";
+  unsigned long lastSecond = 0;
+  unsigned long lastLevelUpdate = 0;
+  prevFreqIndex = -1;
+  prevLevelValue = -1;
+  prevLevelBars = -1;
+  prevLevelNoSignal = true;
+  treatmentScreenDrawn = false;
+
+  // Pause state machine variables
+  bool         pauseActive    = false;
+  unsigned long pauseStartMs  = 0;
+  const unsigned long PAUSE_DURATION_MS = 500UL;
+
+  for (int i = 0; i < numFreq; i++) {
+
+    // === Non-blocking pause between frequencies (not before the first one) ===
+    if (i > 0) {
+      // Begin pause: set pin HIGH to block output signal
+      pauseActive = true;
+      pauseStartMs = millis();
+      digitalWrite(pinOutputPause, HIGH);
+      gen.EnableOutput(false);  // optionally silence generator during pause
+
+      // Non-blocking pause loop
+      while (pauseActive) {
+        unsigned long now = millis();
+
+        // Check if pause duration has elapsed
+        if (now - pauseStartMs >= PAUSE_DURATION_MS) {
+          pauseActive = false;
+          digitalWrite(pinOutputPause, LOW);  // re-enable output signal
+          gen.EnableOutput(true);             // re-enable generator
+          break;
+        }
+
+        // Handle abort (button press) during pause
+        if (btnEnterPressed) {
+          digitalWrite(pinOutputPause, LOW);  // restore pin state
+          gen.EnableOutput(false);
+          isSineWave = true;
+          digitalWrite(pinSignalType, LOW);
+          return true;
+        }
+
+        // Handle encoder (wave type change) during pause
+        if (encoderMoved) {
+          int8_t direction = AnalyzeEncoderChange();
+          if (direction > 0 && !isSineWave) {
+            isSineWave = true;
+            digitalWrite(pinSignalType, LOW);
+            UpdateSignalIndicator();
+          } else if (direction < 0 && isSineWave) {
+            isSineWave = false;
+            digitalWrite(pinSignalType, HIGH);
+            UpdateSignalIndicator();
+          }
+        }
+
+        // Keep updating the display during pause (countdown, level shows no signal)
+        if (now - lastLevelUpdate >= 50) {
+          DrawLevelIndicator(0, true, false);  // no signal during pause
+          lastLevelUpdate = now;
+        }
+
+        if (now - lastSecond >= 1000) {
+          unsigned long elapsedTotal = now - sessionStart;
+          unsigned long msLeft2 = (elapsedTotal < totalSessionWithPausesMs) ? (totalSessionWithPausesMs - elapsedTotal) : 0;
+          DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft2, false);
+          UpdateSignalIndicator();
+          lastSecond = now;
+        }
+      }
+    }
+
+    // === Now apply the new frequency ===
+    unsigned long fragmentStartMs = millis();
+    unsigned long fragmentTargetEnd = fragmentStartMs + fragmentMs;
+
+    intFreqToGenerate = diagnosis_frequencies[diagIdx][freqIndices[i]];
+
+    unsigned long elapsed = millis() - sessionStart;
+    unsigned long msLeft = (elapsed < totalSessionWithPausesMs) ? (totalSessionWithPausesMs - elapsed) : 0;
+
+    DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft, !treatmentScreenDrawn);
+    treatmentScreenDrawn = true;
+    UpdateSignalIndicator();
+
+    gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE, REG0, intFreqToGenerate);
+
+    while (isGeneratingFrequency) {
+      unsigned long now = millis();
+
+      if (now >= fragmentTargetEnd) break;
+
+      if (btnEnterPressed) {
+        gen.EnableOutput(false);
+        digitalWrite(pinOutputPause, LOW);  // ensure pin is restored
+        isSineWave = true;
+        digitalWrite(pinSignalType, LOW);
+        return true;
+      }
+
+      if (encoderMoved) {
+        int8_t direction = AnalyzeEncoderChange();
+        if (direction > 0 && !isSineWave) {
+          isSineWave = true;
+          gen.ApplySignal(SINE_WAVE, REG0, intFreqToGenerate);
+          gen.SetOutputSource(REG0);
+          digitalWrite(pinSignalType, LOW);
+          UpdateSignalIndicator();
+        } else if (direction < 0 && isSineWave) {
+          isSineWave = false;
+          gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
+          digitalWrite(pinSignalType, HIGH);
+          UpdateSignalIndicator();
+        }
+      }
+
+      // Update level indicator at 50ms intervals (fast refresh)
+      if (now - lastLevelUpdate >= 50) {
+        int lv = ReadLevelValue();
+        DrawLevelIndicator(lv, false, false);
+        lastLevelUpdate = now;
+      }
+
+      // Update countdown every second
+      if (now - lastSecond >= 1000) {
+        unsigned long elapsedTotal = now - sessionStart;
+        unsigned long msLeft2 = (elapsedTotal < totalSessionWithPausesMs) ? (totalSessionWithPausesMs - elapsedTotal) : 0;
+        DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft2, false);
+        UpdateSignalIndicator();
+        lastSecond = now;
+      }
+    }
+
+    prevFreqIndex = freqIndices[i];
+
+    if (i < numFreq - 1) {
+      PlayTone(1);
+    }
+  }
+
+  gen.EnableOutput(false);
+  digitalWrite(pinOutputPause, LOW);  // ensure pin is restored
+  isGeneratingFrequency = false;
+  isSineWave = true;
+  digitalWrite(pinSignalType, LOW);
 
   tft.fillScreen(ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_helvB24_te);
@@ -1240,13 +1449,14 @@ void ProcessButtonClick() {
   if (!isGeneratingFrequency) {
     EEPROM.update(eepromAddress, selectedItem);
     titleLine = diagnosis_names[selectedItem - 1];
-    isGeneratingFrequency = true;
-    btnEnterPressed = false;
+    isGeneratingFrequency =  true;
+    btnEnterPressed       = false;
 
     if (strcmp(diagnosis_names[selectedItem - 1], "AngelZ") == 0) {
       OpenAngelZ();
+      // restore
       isGeneratingFrequency = false;
-      btnEnterPressed = false;
+      btnEnterPressed       = false;
       SetSelectedItem(selectedItem);
       titleLine = (char*)"DIAGNOSES:";
       DrawTitleBar();
@@ -1254,11 +1464,11 @@ void ProcessButtonClick() {
       DrawList();
       return;
     }
-
+    
     bool aborted = GenerateFrequency();
     if (aborted) {
       isGeneratingFrequency = false;
-      btnEnterPressed = false;
+      btnEnterPressed       = false;
       SetSelectedItem(selectedItem);
       titleLine = (char*)"DIAGNOSES:";
       DrawTitleBar();
@@ -1432,14 +1642,16 @@ void setup() {
   u8g2gfx.setFontDirection(0);
   u8g2gfx.setForegroundColor(ILI9341_GREEN);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-  pinMode(pinShutdown1, OUTPUT);
-  pinMode(pinShutdown2, OUTPUT);
-  pinMode(pinSignalType, OUTPUT);
-  pinMode(pinSDPower, OUTPUT);                  // *** ADDED *** SD card FET power control
-  digitalWrite(pinShutdown1, HIGH);
-  digitalWrite(pinShutdown2, LOW);
-  digitalWrite(pinSignalType, LOW);             // *** CHANGED *** LOW for SIN default
-  digitalWrite(pinSDPower, HIGH);               // *** ADDED *** initially power OFF to SD card
+  pinMode(pinShutdown1,   OUTPUT);
+  pinMode(pinShutdown2,   OUTPUT);
+  pinMode(pinSignalType,  OUTPUT);
+  pinMode(pinOutputPause, OUTPUT);              // pauses output signl between freq. changes 
+  pinMode(pinSDPower, OUTPUT);                  // SD card FET power control
+  digitalWrite(pinShutdown1,  HIGH);
+  digitalWrite(pinShutdown2,   LOW);
+  digitalWrite(pinSignalType,  LOW);            // LOW for SIN default
+  digitalWrite(pinSDPower,    HIGH);            // initially power OFF to SD card
+  digitalWrite(pinOutputPause, LOW);            // default - output signal enabled
   pinMode(pinEncoderCW,  INPUT_PULLUP);
   pinMode(pinEncoderCCW, INPUT_PULLUP);
   pinMode(pinBtnEnter,   INPUT_PULLUP);
@@ -1456,10 +1668,10 @@ void setup() {
   DisplayIntroScreen();
   delay(2500);
 
-  digitalWrite(pinSDPower, LOW);                // *** ADDED *** power ON SD card before loading
-  delay(100);                                   // *** ADDED *** brief delay for SD card power stabilization
+  digitalWrite(pinSDPower, LOW);                // power ON SD card before loading
+  delay(100);                                   // brief delay for SD card power stabilization
   InitializeSDAndSettings();
-  digitalWrite(pinSDPower, HIGH);               // *** ADDED *** power OFF SD card after loading
+  digitalWrite(pinSDPower, HIGH);               // power OFF SD card after loading
 
   DrawTitleBar();
   DrawBattery();
