@@ -1094,7 +1094,7 @@ bool GenerateFrequency() {
 
   unsigned long sessionStart = millis();
 
-  //gen.EnableOutput(true);
+  gen.EnableOutput(true);
   digitalWrite(pinSignalType, isSineWave ? LOW : HIGH);
   //digitalWrite(pinOutputPause, LOW);  // Start 
 
@@ -1109,7 +1109,7 @@ bool GenerateFrequency() {
   for (int i = 0; i < numFreq; i++) {
 
     // FREQUENCY FRAGMENT BEGINS - Set pin 11 HIGH (enable output)
-    digitalWrite(pinOutputPause, HIGH);
+    //digitalWrite(pinOutputPause, HIGH);
     gen.EnableOutput(true);
 
     unsigned long fragmentStartMs = millis();
@@ -1172,17 +1172,18 @@ bool GenerateFrequency() {
     
     gen.EnableOutput(false);
     // FREQUENCY FRAGMENT ENDS - Set pin 11 LOW
-    digitalWrite(pinOutputPause, LOW);
+    digitalWrite(pinOutputPause, HIGH);
 
     prevFreqIndex = freqIndices[i];
-
+    //
     if (i < numFreq - 1) {
       PlayTone(ONE_BEEP);
     }
   }
-
-  digitalWrite(pinOutputPause, LOW);
+  //
   gen.EnableOutput(false);
+  digitalWrite(pinOutputPause, LOW);  // 
+  //
   isGeneratingFrequency = false;
   isSineWave = true;
   digitalWrite(pinSignalType, LOW);
