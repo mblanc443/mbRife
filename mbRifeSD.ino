@@ -1096,7 +1096,7 @@ bool GenerateFrequency() {
 
   gen.EnableOutput(true);
   digitalWrite(pinSignalType, isSineWave ? LOW : HIGH);
-  //digitalWrite(pinOutputPause, LOW);  // Start 
+  digitalWrite(pinOutputPause, LOW);  // Start 
 
   unsigned long lastSecond = 0;
   unsigned long lastLevelUpdate = 0;
@@ -1109,7 +1109,6 @@ bool GenerateFrequency() {
   for (int i = 0; i < numFreq; i++) {
 
     // FREQUENCY FRAGMENT BEGINS - Set pin 11 HIGH (enable output)
-    //digitalWrite(pinOutputPause, HIGH);
     gen.EnableOutput(true);
 
     unsigned long fragmentStartMs = millis();
@@ -1123,14 +1122,15 @@ bool GenerateFrequency() {
     DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft, !treatmentScreenDrawn);
     treatmentScreenDrawn = true;
     UpdateSignalIndicator();
-
+    //
     gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE, REG0, intFreqToGenerate);
-
+    digitalWrite(pinOutputPause, LOW);
+    //
     while (isGeneratingFrequency) {
       unsigned long now = millis();
 
       if (now >= fragmentTargetEnd) break;
-
+      // ABORT
       if (btnEnterPressed) {
         digitalWrite(pinOutputPause, LOW);  // Set to LOW on abort
         gen.EnableOutput(false);
@@ -1170,10 +1170,9 @@ bool GenerateFrequency() {
       }
     }
     
-    gen.EnableOutput(false);
     // FREQUENCY FRAGMENT ENDS - Set pin 11 LOW
     digitalWrite(pinOutputPause, HIGH);
-
+    gen.EnableOutput(false);
     prevFreqIndex = freqIndices[i];
     //
     if (i < numFreq - 1) {
@@ -1182,7 +1181,7 @@ bool GenerateFrequency() {
   }
   //
   gen.EnableOutput(false);
-  digitalWrite(pinOutputPause, LOW);  // 
+  //digitalWrite(pinOutputPause, LOW);  // 
   //
   isGeneratingFrequency = false;
   isSineWave = true;
