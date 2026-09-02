@@ -1109,7 +1109,7 @@ bool GenerateFrequency() {
   for (int i = 0; i < numFreq; i++) {
 
     // FREQUENCY FRAGMENT BEGINS - Set pin 11 HIGH (enable output)
-    gen.EnableOutput(true);
+    //gen.EnableOutput(true);
 
     unsigned long fragmentStartMs = millis();
     unsigned long fragmentTargetEnd = fragmentStartMs + fragmentMs;
@@ -1172,7 +1172,7 @@ bool GenerateFrequency() {
     
     // FREQUENCY FRAGMENT ENDS - Set pin 11 LOW
     digitalWrite(pinOutputPause, HIGH);
-    gen.EnableOutput(false);
+    //gen.EnableOutput(false);
     prevFreqIndex = freqIndices[i];
     //
     if (i < numFreq - 1) {
