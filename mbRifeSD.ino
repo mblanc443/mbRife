@@ -34,6 +34,8 @@
 #define pinGenCS         9
 #define SD_CS           10  // HW lib requirment as default is 53 used by ttf
 #define pinOutputPause  11  // blocks output signal between frequencies - removes spikes
+#define pinAmpPower     12  // Default High
+#define pinAmpOutOff    13  // Default High
 #define pinBtnEnter     21
 #define pinBatteryLevel A0
 #define pinLevelInput   A1
@@ -1543,6 +1545,10 @@ void setup() {
   pinMode(pinEncoderCCW, INPUT_PULLUP);
   pinMode(pinBtnEnter,   INPUT_PULLUP);
   pinMode(pinLevelInput, INPUT);
+  pinMode(pinAmpPower,  OUTPUT);
+  pinMode(pinAmpOutOff, OUTPUT);
+  digitalWrite(pinAmpPower,  HIGH);
+  digitalWrite(pinAmpOutOff, HIGH);
 
   // Use internal 1.1V reference for ADC on A1 (more sensitive for low-level signals)
   // Uncomment the following two lines to enable internal reference for pin A1 readings:
