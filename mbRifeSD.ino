@@ -33,9 +33,9 @@
 #define pinSignalType    8
 #define pinGenCS         9
 #define SD_CS           10  // HW lib requirment as default is 53 used by ttf
-#define pinOutputPause  11  // blocks output signal between frequencies - removes spikes
-#define pinAmpPower     12  // Default High
-#define pinAmpOutOff    13  // Default High
+#define pinOutputPause  11  // High = OFF blocks output signal between frequencies - removes spikes
+#define pinAmpPower     12  // High = OFF
+#define pinAmpOutOff    13  // Low  = OFF
 #define pinBtnEnter     21
 #define pinBatteryLevel A0
 #define pinLevelInput   A1
@@ -1096,8 +1096,13 @@ bool GenerateFrequency() {
 
   gen.EnableOutput(true);
   digitalWrite(pinSignalType, isSineWave ? LOW : HIGH);
-  digitalWrite(pinOutputPause, LOW);  // Start 
-
+  // Amps Control pins
+  digitalWrite(pinAmpPower,    LOW);  // Power ON amps
+  delay(100);
+  digitalWrite(pinAmpOutOff,  HIGH);  // Enable Amps Outputs
+  delay(100);
+  digitalWrite(pinOutputPause, LOW);  // Start
+  
   unsigned long lastSecond = 0;
   unsigned long lastLevelUpdate = 0;
   prevFreqIndex = -1;
@@ -1121,11 +1126,7 @@ bool GenerateFrequency() {
     UpdateSignalIndicator();
     //
     gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE, REG0, intFreqToGenerate);
-  
-    // Pin-12 = 0 - питание ON
-    // Рin-13 = 1 - выход   OFF
-    digitalWrite(pinAmpPower,    LOW);  // Power ON amps
-    digitalWrite(pinAmpOutOff,  HIGH);  // Block Amps Outputs
+    // 
     digitalWrite(pinOutputPause, LOW);
     //
     while (isGeneratingFrequency) {
@@ -1173,7 +1174,7 @@ bool GenerateFrequency() {
     }
     
     // FREQUENCY FRAGMENT ENDS 
-    digitalWrite(pinOutputPause, HIGH);
+    digitalWrite(pinOutputPause, HIGH); // Output paused
     // Pin-13 = 0  - выход    ON
     // Pin-12 = 1  - питание OFF
     digitalWrite(pinAmpOutOff,   LOW);  // Block Amps Outputs
@@ -1188,7 +1189,7 @@ bool GenerateFrequency() {
   //
   gen.EnableOutput(false);
 
-  // 1. Pin-11 = 1  
+  // 1. Pin-11 = 1  - 
   // 2. Pin-13 = 0  - выход    ON
   // 3. Pin-12 = 1  - питание OFF
   //digitalWrite(pinOutputPause, LOW);  // 
@@ -1544,21 +1545,21 @@ void setup() {
   pinMode(pinShutdown1,   OUTPUT);
   pinMode(pinShutdown2,   OUTPUT);
   pinMode(pinSignalType,  OUTPUT);
+  pinMode(pinSDPower,     OUTPUT);                // SD card FET power control
   pinMode(pinOutputPause, OUTPUT);              // pauses output signl between freq. changes 
-  pinMode(pinSDPower, OUTPUT);                  // SD card FET power control
+  pinMode(pinAmpPower,    OUTPUT);
+  pinMode(pinAmpOutOff,   OUTPUT);
   digitalWrite(pinShutdown1,  HIGH);
   digitalWrite(pinShutdown2,   LOW);
   digitalWrite(pinSignalType,  LOW);            // LOW for SIN default
   digitalWrite(pinSDPower,    HIGH);            // initially power OFF to SD card
   digitalWrite(pinOutputPause, LOW);            // default - output signal paused (LOW)
+  digitalWrite(pinAmpPower,   HIGH);            // Power OFF amps
+  digitalWrite(pinAmpOutOff,   LOW);            // Block Amps Outputs
   pinMode(pinEncoderCW,  INPUT_PULLUP);
   pinMode(pinEncoderCCW, INPUT_PULLUP);
   pinMode(pinBtnEnter,   INPUT_PULLUP);
-  pinMode(pinLevelInput, INPUT);
-  pinMode(pinAmpPower,  OUTPUT);
-  pinMode(pinAmpOutOff, OUTPUT);
-  digitalWrite(pinAmpPower, HIGH);              // Power ON amps
-  digitalWrite(pinAmpOutOff, LOW);              // Block Amps Outputs
+  pinMode(pinLevelInput,        INPUT);
 
   // Use internal 1.1V reference for ADC on A1 (more sensitive for low-level signals)
   // Uncomment the following two lines to enable internal reference for pin A1 readings:
