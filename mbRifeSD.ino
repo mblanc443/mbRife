@@ -4,6 +4,8 @@
 // VU-style level indicator: 20 vertical bars, 14 green + 6 red, gray when no signal
 // ADC for A1 powered by internal reference voltage (commented out lines 1450-1451)
 // Pin 11 used to block output to avoid of output spikes 
+// Pin 12 used to enable power for amplifiers HIGH = power OFF
+// Pin 13 used to block outputs for amplifiers LOW  = blocking OFF
 #include <EEPROM.h>
 #include <AD9833.h>
 #include <SPI.h>
