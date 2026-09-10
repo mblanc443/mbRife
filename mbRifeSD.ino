@@ -1191,12 +1191,9 @@ bool GenerateFrequency() {
   //
   gen.EnableOutput(false);
 
-  // 1. Pin-11 = 1  - 
-  // 2. Pin-13 = 0  - выход    ON
-  // 3. Pin-12 = 1  - питание OFF
-  //digitalWrite(pinOutputPause, LOW);  // 
-  digitalWrite(pinAmpOutOff,   LOW);  // Block Amps Outputs
-  digitalWrite(pinAmpPower,   HIGH);  // Power ON amps
+  //digitalWrite(pinOutputPause, HIGH);  // Comment out
+  digitalWrite(pinAmpOutOff,   LOW);     // Block Amps Outputs
+  digitalWrite(pinAmpPower,   HIGH);     // Power OFF amps
   
   isGeneratingFrequency = false;
   isSineWave = true;
