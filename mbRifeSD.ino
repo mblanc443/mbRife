@@ -466,8 +466,6 @@ void DrawLevelIndicator(int level, bool noSignal, bool forceFull) {
   }
 }
 
-
-// ============================================================
 // DISPLAY HELPER FUNCTIONS
 void DisplayErrorMessage(const char* message, uint16_t color) {
   tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK);
@@ -1110,9 +1108,6 @@ bool GenerateFrequency() {
 
   for (int i = 0; i < numFreq; i++) {
 
-    // FREQUENCY FRAGMENT BEGINS - Set pin 11 HIGH (enable output)
-    //gen.EnableOutput(true);
-
     unsigned long fragmentStartMs = millis();
     unsigned long fragmentTargetEnd = fragmentStartMs + fragmentMs;
 
@@ -1126,6 +1121,11 @@ bool GenerateFrequency() {
     UpdateSignalIndicator();
     //
     gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE, REG0, intFreqToGenerate);
+  
+    // Pin-12 = 0 - питание ON
+    // Рin-13 = 1 - выход   OFF
+    digitalWrite(pinAmpPower,    LOW);  // Power ON amps
+    digitalWrite(pinAmpOutOff,  HIGH);  // Block Amps Outputs
     digitalWrite(pinOutputPause, LOW);
     //
     while (isGeneratingFrequency) {
@@ -1140,7 +1140,7 @@ bool GenerateFrequency() {
         digitalWrite(pinSignalType, LOW);
         return true;
       }
-
+      // SINE <-> SQUARE
       if (encoderMoved) {
         int8_t direction = AnalyzeEncoderChange();
         if (direction > 0 && !isSineWave) {
@@ -1156,13 +1156,13 @@ bool GenerateFrequency() {
           UpdateSignalIndicator();
         }
       }
-
+      // SIGNALINDICATOR
       if (now - lastLevelUpdate >= 50) {
         int lv = ReadLevelValue();
         DrawLevelIndicator(lv, false, false);
         lastLevelUpdate = now;
       }
-
+      // SESSION TIME
       if (now - lastSecond >= 1000) {
         unsigned long elapsedTotal = now - sessionStart;
         unsigned long msLeft2 = (elapsedTotal < totalSessionMs) ? (totalSessionMs - elapsedTotal) : 0;
@@ -1172,9 +1172,13 @@ bool GenerateFrequency() {
       }
     }
     
-    // FREQUENCY FRAGMENT ENDS - Set pin 11 LOW
+    // FREQUENCY FRAGMENT ENDS 
     digitalWrite(pinOutputPause, HIGH);
-    //gen.EnableOutput(false);
+    // Pin-13 = 0  - выход    ON
+    // Pin-12 = 1  - питание OFF
+    digitalWrite(pinAmpOutOff,   LOW);  // Block Amps Outputs
+    digitalWrite(pinAmpPower,   HIGH);  // Power ON amps
+
     prevFreqIndex = freqIndices[i];
     //
     if (i < numFreq - 1) {
@@ -1183,8 +1187,14 @@ bool GenerateFrequency() {
   }
   //
   gen.EnableOutput(false);
+
+  // 1. Pin-11 = 1  
+  // 2. Pin-13 = 0  - выход    ON
+  // 3. Pin-12 = 1  - питание OFF
   //digitalWrite(pinOutputPause, LOW);  // 
-  //
+  digitalWrite(pinAmpOutOff,   LOW);  // Block Amps Outputs
+  digitalWrite(pinAmpPower,   HIGH);  // Power ON amps
+  
   isGeneratingFrequency = false;
   isSineWave = true;
   digitalWrite(pinSignalType, LOW);
@@ -1547,8 +1557,8 @@ void setup() {
   pinMode(pinLevelInput, INPUT);
   pinMode(pinAmpPower,  OUTPUT);
   pinMode(pinAmpOutOff, OUTPUT);
-  digitalWrite(pinAmpPower,  HIGH);
-  digitalWrite(pinAmpOutOff, HIGH);
+  digitalWrite(pinAmpPower, HIGH);              // Power ON amps
+  digitalWrite(pinAmpOutOff, LOW);              // Block Amps Outputs
 
   // Use internal 1.1V reference for ADC on A1 (more sensitive for low-level signals)
   // Uncomment the following two lines to enable internal reference for pin A1 readings:
