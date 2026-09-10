@@ -1179,8 +1179,8 @@ bool GenerateFrequency() {
     digitalWrite(pinOutputPause, HIGH); // Output paused
     // Pin-13 = 0  - выход    ON
     // Pin-12 = 1  - питание OFF
-    digitalWrite(pinAmpOutOff,   LOW);  // Block Amps Outputs
-    digitalWrite(pinAmpPower,   HIGH);  // Power ON amps
+    //digitalWrite(pinAmpOutOff,   LOW);  // Block Amps Outputs
+    //digitalWrite(pinAmpPower,   HIGH);  // Power ON amps
 
     prevFreqIndex = freqIndices[i];
     //
