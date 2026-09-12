@@ -1138,6 +1138,8 @@ bool GenerateFrequency() {
       // ABORT
       if (btnEnterPressed) {
         digitalWrite(pinOutputPause, LOW);  // Set to LOW on abort
+        digitalWrite(pinAmpOutOff,   LOW);  // Block Amps Outputs
+        digitalWrite(pinAmpPower,   HIGH);  // Power OFF amps
         gen.EnableOutput(false);
         isSineWave = true;
         digitalWrite(pinSignalType, LOW);
