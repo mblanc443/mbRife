@@ -40,7 +40,7 @@
 #define pinAmpOutOff    13  // Low  = OFF
 #define pinBtnEnter     21
 #define pinBatteryLevel A0
-#define pinLevelInput   A1
+#define pinLevelInput   A1  // measures level of output signal during treatment
 #define TFT_CS          53
 #define TFT_DC          48
 #define TFT_RST         49
