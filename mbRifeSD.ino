@@ -1,3 +1,15 @@
+/*
+Affected functions:
+- `CheckAndHandleAmplifierShort()` - new, block pin 13 only, beep while shorted, release after safe + 2 sec
+- `ReleaseAmplifierBlock()` - new, manual release pin 13 only
+- `GenerateFrequency()` - replaced 2x `delay(100)` with millis wait calling short check, added short check in loop, added early break and short message
+- `loop()` - added background short check
+
+Affected variables / defines:
+- `SHRT_THRESHOLD_MAX` 1020, `SHRT_THRESHOLD_SAFE` 950, `SHRT_COOLDOWN_MS` 2000UL, `SHRT_BEEP_FREQ`, `SHRT_BEEP_INTERVAL`, `SHRT_BEEP_DURATION`, `SHRT_BLINK_MS`, `SHRT_CHECK_MS`, `AMP_STAB_MS` - new
+- `emergencyShortDetected`, `shortBlockStartTime`, `lastShortBeepTime`, `lastShortBlinkTime`, `lastShortCheckTime` - new
+- `pinAmpPower` pin 12 no longer touched in emergency path
+*/
 // Rife Machine - Arduino Mega2560 + ILI9341 + AD9833 + SD card + AngelZ
 // Pin 8 signal type indicator, SD card support, AngelZ unchanged
 // Pin A1 connected to output which measures level of output signal during treatment
@@ -152,6 +164,17 @@ const int TITLE_BAR_HIGHT = 30;
 #define LEVEL_GREEN_BARS    14
 #define LEVEL_RED_BARS       6
 
+// Emergency short protection on A1, block Amp Output only
+#define SHRT_THRESHOLD_MAX 1020
+#define SHRT_THRESHOLD_SAFE 950
+#define SHRT_COOLDOWN_MS   2000UL
+#define SHRT_BEEP_FREQ     1000
+#define SHRT_BEEP_INTERVAL 500
+#define SHRT_BEEP_DURATION 100
+#define SHRT_BLINK_MS      200
+#define SHRT_CHECK_MS      100
+#define AMP_STAB_MS        100
+
 static int  prevFreqIndex        =      -1;
 static char prevTimeStr[6]       = "99:99";
 static char prevAngelZTimeStr[6] = "00:00";
@@ -159,6 +182,13 @@ static int  prevLevelValue       =      -1;
 static int  prevLevelBars        =      -1;
 static bool prevLevelNoSignal    =    true;
 static bool treatmentScreenDrawn =   false;
+
+// Emergency short protection state
+bool emergencyShortDetected = false;
+unsigned long shortBlockStartTime = 0;
+unsigned long lastShortBeepTime = 0;
+unsigned long lastShortBlinkTime = 0;
+unsigned long lastShortCheckTime = 0;
 
 // ==== AngelZ Constants ====
 #define     ANGELZ_TOTAL_POINTS           48
@@ -1018,6 +1048,62 @@ byte CalulatePageOffset(byte item) {
   return ((item - 1) / ITEMS_PER_PAGE) * ITEMS_PER_PAGE;
 }
 
+// Emergency short protection on A1
+void CheckAndHandleAmplifierShort() {
+  int rawValue = analogRead(pinLevelInput);
+  // Amp short, output shorted
+  if (rawValue >= SHRT_THRESHOLD_MAX && !emergencyShortDetected) {
+    emergencyShortDetected = true;
+    shortBlockStartTime = millis();
+    lastShortBeepTime = millis();
+    lastShortBlinkTime = millis();
+    digitalWrite(pinAmpOutOff, LOW);  // Block Amps Outputs
+    gen.EnableOutput(false);
+    DisplayErrorMessage("AMPLIFIER SHORTS!\nBLOCKING OUTPUT", ILI9341_RED);
+    debugln("EMERGENCY: Amplifier short detected! Blocking output.");
+  }
+  // Amp normal, release block
+  else if (rawValue < SHRT_THRESHOLD_SAFE && emergencyShortDetected) {
+    if (millis() - shortBlockStartTime >= SHRT_COOLDOWN_MS) {
+      emergencyShortDetected = false;
+      noTone(pinBeepOut);
+      digitalWrite(pinAmpOutOff, HIGH);  // Enable Amps Outputs
+      if (isGeneratingFrequency) {
+        gen.EnableOutput(true);
+      }
+      DisplayErrorMessage("OUTPUT RESTORED", ILI9341_GREEN);
+      debugln("EMERGENCY: Short condition cleared. Output restored.");
+    }
+  }
+  // blink and beep while shorted
+  if (emergencyShortDetected) {
+    if (millis() - lastShortBlinkTime >= SHRT_BLINK_MS) {
+      lastShortBlinkTime = millis();
+      digitalWrite(pinSignalType, digitalRead(pinSignalType) ? LOW : HIGH);
+    }
+    if (millis() - lastShortBeepTime >= SHRT_BEEP_INTERVAL) {
+      lastShortBeepTime = millis();
+      tone(pinBeepOut, SHRT_BEEP_FREQ, SHRT_BEEP_DURATION);
+    }
+  } else {
+    noTone(pinBeepOut);
+  }
+}
+
+// Manual release of Amp block
+void ReleaseAmplifierBlock() {
+  if (emergencyShortDetected) {
+    emergencyShortDetected = false;
+    noTone(pinBeepOut);
+    digitalWrite(pinAmpOutOff, HIGH);  // Enable Amps Outputs
+    if (isGeneratingFrequency) {
+      gen.EnableOutput(true);
+    }
+    DisplayErrorMessage("BLOCK MANUALLY RELEASED", ILI9341_YELLOW);
+    debugln("Manual release of amplifier block");
+  }
+}
+
 
 // ANGELZ SESSION - clean screen, no level indicator
 void OpenAngelZ() {
@@ -1096,13 +1182,21 @@ bool GenerateFrequency() {
 
   unsigned long sessionStart = millis();
 
+  // init emergency state
+  emergencyShortDetected = false;
+  lastShortCheckTime = 0;
+  lastShortBeepTime = 0;
+  lastShortBlinkTime = 0;
+
   gen.EnableOutput(true);
   digitalWrite(pinSignalType, isSineWave ? LOW : HIGH);
   // Amps Control pins
   digitalWrite(pinAmpPower,    LOW);  // Power ON amps
-  delay(100);
+  // wait 100 msec without blocking
+  { unsigned long stabStart = millis(); while (millis() - stabStart < AMP_STAB_MS) { CheckAndHandleAmplifierShort(); if (emergencyShortDetected) break; if (btnEnterPressed) break; } }
   digitalWrite(pinAmpOutOff,  HIGH);  // Enable Amps Outputs
-  delay(100);
+  // wait 100 msec without blocking
+  { unsigned long stabStart = millis(); while (millis() - stabStart < AMP_STAB_MS) { CheckAndHandleAmplifierShort(); if (emergencyShortDetected) break; if (btnEnterPressed) break; } }
   digitalWrite(pinOutputPause, LOW);  // Start
   
   unsigned long lastSecond = 0;
@@ -1135,6 +1229,12 @@ bool GenerateFrequency() {
       unsigned long now = millis();
 
       if (now >= fragmentTargetEnd) break;
+      // check Amp short on A1
+      if (now - lastShortCheckTime >= SHRT_CHECK_MS) {
+        CheckAndHandleAmplifierShort();
+        lastShortCheckTime = now;
+        if (emergencyShortDetected) break;
+      }
       // ABORT
       if (btnEnterPressed) {
         digitalWrite(pinOutputPause, LOW);  // Set to LOW on abort
@@ -1181,6 +1281,8 @@ bool GenerateFrequency() {
     digitalWrite(pinOutputPause, HIGH); // Output paused
 
     prevFreqIndex = freqIndices[i];
+    // stop on Amp short
+    if (emergencyShortDetected) break;
     //
     if (i < numFreq - 1) {
       PlayTone(ONE_BEEP);
@@ -1197,27 +1299,47 @@ bool GenerateFrequency() {
   isSineWave = true;
   digitalWrite(pinSignalType, LOW);
 
-  tft.fillScreen(ILI9341_BLACK);
-  u8g2gfx.setFont(u8g2_font_helvB24_te);
-  u8g2gfx.setForegroundColor(ILI9341_GREEN);
-  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-  int textWidth = u8g2gfx.getUTF8Width("Finished!");
-  u8g2gfx.setCursor((320 - textWidth) / 2, 120);
-  u8g2gfx.print("Finished!");
+  // show Amp short message
+  if (emergencyShortDetected) {
+    tft.fillScreen(ILI9341_BLACK);
+    u8g2gfx.setFont(u8g2_font_helvB24_te);
+    u8g2gfx.setForegroundColor(ILI9341_RED);
+    u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+    int textWidth = u8g2gfx.getUTF8Width("SHORT CIRCUIT!");
+    u8g2gfx.setCursor((320 - textWidth) / 2, 100);
+    u8g2gfx.print("SHORT CIRCUIT!");
+    textWidth = u8g2gfx.getUTF8Width("OUTPUT BLOCKED");
+    u8g2gfx.setCursor((320 - textWidth) / 2, 140);
+    u8g2gfx.print("OUTPUT BLOCKED");
+    // wait without blocking
+    unsigned long msgStart = millis();
+    while (millis() - msgStart < 2000) {
+      CheckAndHandleAmplifierShort();
+      if (btnEnterPressed) break;
+    }
+  } else {
+    tft.fillScreen(ILI9341_BLACK);
+    u8g2gfx.setFont(u8g2_font_helvB24_te);
+    u8g2gfx.setForegroundColor(ILI9341_GREEN);
+    u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+    int textWidth = u8g2gfx.getUTF8Width("Finished!");
+    u8g2gfx.setCursor((320 - textWidth) / 2, 120);
+    u8g2gfx.print("Finished!");
 
-  unsigned long actualElapsed = millis() - sessionStart;
-  int totalMin = (actualElapsed / 1000) / 60;
-  int totalSec = (actualElapsed / 1000) % 60;
-  char timeBuf[20];
-  sprintf(timeBuf, "Time: %02d:%02d", totalMin, totalSec);
-  u8g2gfx.setFont(u8g2_font_t0_22b_tf);
-  u8g2gfx.setForegroundColor(ILI9341_YELLOW);
-  int tw = u8g2gfx.getUTF8Width(timeBuf);
-  u8g2gfx.setCursor((320 - tw) / 2, 160);
-  u8g2gfx.print(timeBuf);
+    unsigned long actualElapsed = millis() - sessionStart;
+    int totalMin = (actualElapsed / 1000) / 60;
+    int totalSec = (actualElapsed / 1000) % 60;
+    char timeBuf[20];
+    sprintf(timeBuf, "Time: %02d:%02d", totalMin, totalSec);
+    u8g2gfx.setFont(u8g2_font_t0_22b_tf);
+    u8g2gfx.setForegroundColor(ILI9341_YELLOW);
+    int tw = u8g2gfx.getUTF8Width(timeBuf);
+    u8g2gfx.setCursor((320 - tw) / 2, 160);
+    u8g2gfx.print(timeBuf);
 
-  PlayTone(THREE_BEEPS);
-  delay(3000);
+    PlayTone(THREE_BEEPS);
+    delay(3000);
+  }
 
   titleLine = (char*)"DIAGNOSES:";
   digitalWrite(pinShutdown1, LOW);
@@ -1479,6 +1601,16 @@ void setup() {
 
 // MAIN LOOP
 void loop() {
+  // check Amp short on A1
+  if (millis() - lastShortCheckTime >= 200) {
+    bool ampsPowered = (digitalRead(pinAmpPower) == LOW);
+    bool outputEnabled = (digitalRead(pinAmpOutOff) == HIGH);
+    if ((ampsPowered && outputEnabled && !emergencyShortDetected) || emergencyShortDetected) {
+      CheckAndHandleAmplifierShort();
+    }
+    lastShortCheckTime = millis();
+  }
+
   if (encoderMoved) {
     int8_t direction = AnalyzeEncoderChange();
     if (direction != 0) {
