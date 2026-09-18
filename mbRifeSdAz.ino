@@ -1,23 +1,7 @@
-/*
-Affected functions:
-- `CheckAndHandleAmplifierShort()` - new, block pin 13 only, beep while shorted, release after safe + 2 sec
-- `ReleaseAmplifierBlock()` - new, manual release pin 13 only
-- `GenerateFrequency()` - replaced 2x `delay(100)` with millis wait calling short check, added short check in loop, added early break and short message
-- `loop()` - added background short check
-
-Affected variables / defines:
-- `SHRT_THRESHOLD_MAX` 1020, `SHRT_THRESHOLD_SAFE` 950, `SHRT_COOLDOWN_MS` 2000UL, `SHRT_BEEP_FREQ`, `SHRT_BEEP_INTERVAL`, `SHRT_BEEP_DURATION`, `SHRT_BLINK_MS`, `SHRT_CHECK_MS`, `AMP_STAB_MS` - new
-- `emergencyShortDetected`, `shortBlockStartTime`, `lastShortBeepTime`, `lastShortBlinkTime`, `lastShortCheckTime` - new
-- `pinAmpPower` pin 12 no longer touched in emergency path
-*/
 // Rife Machine - Arduino Mega2560 + ILI9341 + AD9833 + SD card + AngelZ
-// Pin 8 signal type indicator, SD card support, AngelZ unchanged
-// Pin A1 connected to output which measures level of output signal during treatment
+// Pin 8 signal type (SIN/SQUARE) indicator, SD card, AngelZ
+// Pin A1 connected to analog output, measures treatment output and protexts from shorts 
 // VU-style level indicator: 20 vertical bars, 14 green + 6 red, gray when no signal
-// ADC for A1 powered by internal reference voltage (commented out lines 1450-1451)
-// Pin 11 used to block output to avoid of output spikes 
-// Pin 12 used to enable power for amplifiers HIGH = power OFF
-// Pin 13 used to block outputs for amplifiers LOW  = blocking OFF
 #include <EEPROM.h>
 #include <AD9833.h>
 #include <SPI.h>
@@ -48,8 +32,8 @@ Affected variables / defines:
 #define pinGenCS         9
 #define SD_CS           10  // HW lib requirment as default is 53 used by ttf
 #define pinOutputPause  11  // High = OFF blocks output signal between frequencies - removes spikes
-#define pinAmpPower     12  // High = OFF
-#define pinAmpOutOff    13  // Low  = OFF
+#define pinAmpPower     12  // High = OFF (power OFF) used to enable power for amplifiers
+#define pinAmpOutOff    13  // Low  = OFF (unblocked) used to block outputs for amplifiers
 #define pinBtnEnter     21
 #define pinBatteryLevel A0
 #define pinLevelInput   A1  // measures level of output signal during treatment
