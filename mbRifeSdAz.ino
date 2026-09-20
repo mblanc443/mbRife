@@ -1526,14 +1526,7 @@ void PlayTone(int n) {
 // SETUP
 void setup() {
   Serial.begin(9600);
-  tft.begin();
-  tft.setRotation(1);
-  tft.fillScreen(ILI9341_BLACK);
-  u8g2gfx.begin(tft);
-  u8g2gfx.setFontMode(1);
-  u8g2gfx.setFontDirection(0);
-  u8g2gfx.setForegroundColor(ILI9341_GREEN);
-  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+  //
   pinMode(pinShutdown1,   OUTPUT);
   pinMode(pinShutdown2,   OUTPUT);
   pinMode(pinSignalType,  OUTPUT);
@@ -1552,7 +1545,16 @@ void setup() {
   pinMode(pinEncoderCCW, INPUT_PULLUP);
   pinMode(pinBtnEnter,   INPUT_PULLUP);
   pinMode(pinLevelInput,        INPUT);
-
+  //
+  tft.begin();
+  tft.setRotation(1);
+  tft.fillScreen(ILI9341_BLACK);
+  u8g2gfx.begin(tft);
+  u8g2gfx.setFontMode(1);
+  u8g2gfx.setFontDirection(0);
+  u8g2gfx.setForegroundColor(ILI9341_GREEN);
+  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
+  
   // Use internal 1.1V reference for ADC on A1 (more sensitive for low-level signals)
   // Uncomment the following two lines to enable internal reference for pin A1 readings:
   analogReference(INTERNAL1V1);  // Set ADC reference to internal 1.1V bandgap  
