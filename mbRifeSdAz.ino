@@ -2,6 +2,7 @@
 // Pin 8 signal type (SIN/SQUARE) indicator, SD card, AngelZ
 // Pin A1 connected to analog output, measures treatment output and protexts from shorts 
 // VU-style level indicator: 20 vertical bars, 14 green + 6 red, gray when no signal
+// Пин 8: "Тип Сигнала" по умолчанию установлен в 1 (Синус)
 #include <EEPROM.h>
 #include <AD9833.h>
 #include <SPI.h>
@@ -28,7 +29,7 @@
 #define pinShutdown2     5
 #define pinShutdown1     6
 #define pinSDPower       7 
-#define pinSignalType    8
+#define pinSignalType    8  // Switch SIN <-> SQUARE, default SIN (value = 1)
 #define pinGenCS         9
 #define SD_CS           10  // HW lib requirment as default is 53 used by ttf
 #define pinOutputPause  11  // High = OFF blocks output signal between frequencies - removes spikes
@@ -1063,7 +1064,7 @@ void CheckAndHandleAmplifierShort() {
   if (emergencyShortDetected) {
     if (millis() - lastShortBlinkTime >= SHRT_BLINK_MS) {
       lastShortBlinkTime = millis();
-      digitalWrite(pinSignalType, digitalRead(pinSignalType) ? LOW : HIGH);
+      //digitalWrite(pinSignalType, digitalRead(pinSignalType) ? LOW : HIGH);
     }
     if (millis() - lastShortBeepTime >= SHRT_BEEP_INTERVAL) {
       lastShortBeepTime = millis();
@@ -1173,7 +1174,7 @@ bool GenerateFrequency() {
   lastShortBlinkTime = 0;
 
   gen.EnableOutput(true);
-  digitalWrite(pinSignalType, isSineWave ? LOW : HIGH);
+  digitalWrite(pinSignalType, isSineWave ? HIGH : LOW);
   // Amps Control pins
   digitalWrite(pinAmpPower,    LOW);  // Power ON amps
   // wait 100 msec without blocking
@@ -1226,7 +1227,7 @@ bool GenerateFrequency() {
         digitalWrite(pinAmpPower,   HIGH);  // Power OFF amps
         gen.EnableOutput(false);
         isSineWave = true;
-        digitalWrite(pinSignalType, LOW);
+        digitalWrite(pinSignalType, HIGH);
         return true;
       }
       // SINE <-> SQUARE
@@ -1236,12 +1237,12 @@ bool GenerateFrequency() {
           isSineWave = true;
           gen.ApplySignal(SINE_WAVE, REG0, intFreqToGenerate);
           gen.SetOutputSource(REG0);
-          digitalWrite(pinSignalType, LOW);
+          digitalWrite(pinSignalType, HIGH);
           UpdateSignalIndicator();
         } else if (direction < 0 && isSineWave) {
           isSineWave = false;
           gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
-          digitalWrite(pinSignalType, HIGH);
+          digitalWrite(pinSignalType, LOW);
           UpdateSignalIndicator();
         }
       }
@@ -1281,7 +1282,7 @@ bool GenerateFrequency() {
   
   isGeneratingFrequency = false;
   isSineWave = true;
-  digitalWrite(pinSignalType, LOW);
+  digitalWrite(pinSignalType, HIGH);
 
   // show Amp short message
   if (emergencyShortDetected) {
@@ -1530,13 +1531,13 @@ void setup() {
   pinMode(pinShutdown1,   OUTPUT);
   pinMode(pinShutdown2,   OUTPUT);
   pinMode(pinSignalType,  OUTPUT);
-  pinMode(pinSDPower,     OUTPUT);                // SD card FET power control
+  pinMode(pinSDPower,     OUTPUT);              // SD card FET power control
   pinMode(pinOutputPause, OUTPUT);              // pauses output signl between freq. changes 
   pinMode(pinAmpPower,    OUTPUT);
   pinMode(pinAmpOutOff,   OUTPUT);
   digitalWrite(pinShutdown1,  HIGH);
   digitalWrite(pinShutdown2,   LOW);
-  digitalWrite(pinSignalType,  LOW);            // LOW for SIN default
+  digitalWrite(pinSignalType, HIGH);            // HIGH for SIN default
   digitalWrite(pinSDPower,    HIGH);            // initially power OFF to SD card
   digitalWrite(pinOutputPause, LOW);            // default - output signal paused (LOW)
   digitalWrite(pinAmpPower,   HIGH);            // Power OFF amps
