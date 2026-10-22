@@ -3,8 +3,11 @@
 // Pin A1 connected to analog output, measures treatment output and protexts from shorts 
 // VU-style level indicator: 20 vertical bars, 14 green + 6 red, gray when no signal
 // Пин 8: "Тип Сигнала" по умолчанию установлен в 1 (Синус)
-// [okt12-26]Короткое по входу защита: Блокируются выходы только, усилители остаются под напряжением.
-// [okt12-26]Батарея проверяется 3 раза и если равно или ниже 3.3в выстявляет рекомендацию зарядить, но выключение 3 сек нажатием работает.
+// short protection: block Amp outputs only (amps stay ON), configurable re-check, battery low latch
+// Защита от короткого по выходу: Заблокировать Усилители только, Питание остается включеннным на время лечения. 
+// повторное проверка уровня - конфигурируется через переменную.
+// Уход в аварию по напряжению батареи из всех сценнариев. (
+// FIX - pins 12/13 driven only through SetAmpPower()/SetAmpOutput() with software state flags
 #include <EEPROM.h>
 #include <AD9833.h>
 #include <SPI.h>
@@ -24,6 +27,16 @@
   #define debugln(x)
 #endif
 
+// NEW - USER CONFIGURATION (edit here, no SD card needed)
+// Amp short: time to wait before outputs are re-opened for the short re-check
+#define SHRT_RETRY_SEC       4      // NEW - seconds, allowed range 3..5
+#define SHRT_RETRY_MIN_SEC   3      // NEW - lowest allowed value
+#define SHRT_RETRY_MAX_SEC   5      // NEW - highest allowed value
+#if (SHRT_RETRY_SEC < SHRT_RETRY_MIN_SEC) || (SHRT_RETRY_SEC > SHRT_RETRY_MAX_SEC)
+  #error "SHRT_RETRY_SEC must be between SHRT_RETRY_MIN_SEC and SHRT_RETRY_MAX_SEC"  // NEW - compile-time check
+#endif
+#define SHRT_RETRY_MS        (SHRT_RETRY_SEC * 1000UL)  // NEW - retry wait in ms
+
 // Pins
 #define pinEncoderCW     2
 #define pinEncoderCCW    3
@@ -36,6 +49,7 @@
 #define SD_CS           10  // HW lib requirment as default is 53 used by ttf
 #define pinOutputPause  11  // High = OFF blocks output signal between frequencies - removes spikes
 #define pinAmpPower     12  // High = OFF (power OFF) used to enable power for amplifiers
+// FIX - pinAmpOutOff: LOW = outputs BLOCKED, HIGH = outputs OPEN (all code uses SetAmpOutput())
 #define pinAmpOutOff    13  // Low  = OFF (unblocked) used to block outputs for amplifiers
 #define pinBtnEnter     21
 #define pinBatteryLevel A0
@@ -155,6 +169,7 @@ const int TITLE_BAR_HIGHT = 30;
 #define LEVEL_RED_BARS       6
 
 // Emergency short protection on A1, block Amp Output only
+// FIX - if a real short reads below 1020 on A1, lower this value (watch "A1 raw:" with DEBUG 1)
 #define SHRT_THRESHOLD_MAX 1020
 #define SHRT_BEEP_FREQ     1000
 #define SHRT_BEEP_INTERVAL 500
@@ -162,10 +177,7 @@ const int TITLE_BAR_HIGHT = 30;
 #define SHRT_BLINK_MS      200
 #define SHRT_CHECK_MS      100
 #define AMP_STAB_MS        100
-#define SHRT_RETRY_DEFAULT_SEC  4      // NEW - default wait before re-check (seconds)
-#define SHRT_RETRY_MIN_SEC      3      // NEW - configurable range 3-5 sec (settings.txt [protection])
-#define SHRT_RETRY_MAX_SEC      5      // NEW
-#define SHRT_RECHECK_MS       500UL    // NEW - time outputs are re-opened for the short re-check
+#define SHRT_RECHECK_MS    500UL    // NEW - time outputs are re-opened for the short re-check
 
 static int  prevFreqIndex        =      -1;
 static char prevTimeStr[6]       = "99:99";
@@ -181,10 +193,13 @@ unsigned long shortBlockStartTime = 0;
 unsigned long lastShortBeepTime = 0;
 unsigned long lastShortBlinkTime = 0;
 unsigned long lastShortCheckTime = 0;
-unsigned long shortRetryMs       = SHRT_RETRY_DEFAULT_SEC * 1000UL;  // NEW - configurable wait before re-check
 bool          shortRechecking    = false;                             // NEW - outputs re-opened, checking
 unsigned long shortRecheckStartTime = 0;                              // NEW
 unsigned long shortPausedTotal   = 0;                                 // NEW - total blocked time (treatment clock)
+
+// FIX - software state of the amp pins (single source of truth, pins are never read back)
+bool          ampOutputOpen      = false;   // FIX - true = pinAmpOutOff HIGH (outputs open)
+bool          ampPowerOn         = false;   // FIX - true = pinAmpPower LOW (amps powered)
 
 // Battery low protection state
 bool          batteryLowLatched   = false;   // NEW - latched until powered OFF manually
@@ -267,6 +282,11 @@ void DisplayAmpBlockedScreen();           // NEW
 bool CheckBatteryLow();                   // NEW
 void ShowBatteryLowAlert();               // NEW
 void ReleaseAmplifierBlock();             // NEW
+void SetAmpOutput(bool open);             // FIX
+void SetAmpPower(bool on);                // FIX
+int  ReadShortLevel();                    // FIX
+void AbortTreatment();                    // FIX - shared abort sequence
+void WaitBatterySafe(unsigned long ms);   // FIX - delay that keeps checking battery
 
 // AngelZ Sequences Class
 class Sequences {
@@ -533,7 +553,7 @@ void DisplayAmpBlockedScreen() {
   u8g2gfx.print(line1);
   u8g2gfx.setForegroundColor(ILI9341_YELLOW);
   char line2[32];
-  sprintf(line2, "Output blocked, retry %us", (unsigned int)(shortRetryMs / 1000UL));  // NEW - show retry delay
+  sprintf(line2, "Output blocked, retry %us", (unsigned int)SHRT_RETRY_SEC);  // NEW - show retry delay
   int w2 = u8g2gfx.getUTF8Width(line2);
   u8g2gfx.setCursor((320 - w2) / 2, 140);
   u8g2gfx.print(line2);
@@ -881,14 +901,6 @@ void CreateDefaultSettingsFile() {
     }
     file.println();
   }
-
-  // NEW - protection section: wait before output re-check after a short (3-5 sec)
-  file.println();
-  file.println("## Protection section - short_retry_sec = wait before re-check after amp short (3-5 sec)");
-  file.println("[protection]");
-  file.print("short_retry_sec=");
-  file.println(SHRT_RETRY_DEFAULT_SEC);
-
   file.close();
 }
 
@@ -948,22 +960,6 @@ void InitializeSDAndSettings() {
     if (line.startsWith("[")) {
       currentSection = line;
       if (line.indexOf("[diagnoses]") != -1) hasDiagnosesSection = true;
-      continue;
-    }
-
-    // NEW - [protection] section: short_retry_sec=3..5
-    if (currentSection == "[protection]") {
-      int eqPos = line.indexOf('=');
-      if (eqPos > 0) {
-        String key = line.substring(0, eqPos);
-        key.trim();
-        if (key == "short_retry_sec") {
-          int sec = line.substring(eqPos + 1).toInt();
-          if (sec < SHRT_RETRY_MIN_SEC) sec = SHRT_RETRY_MIN_SEC;   // clamp to 3..5 sec
-          if (sec > SHRT_RETRY_MAX_SEC) sec = SHRT_RETRY_MAX_SEC;
-          shortRetryMs = (unsigned long)sec * 1000UL;               // store in ms
-        }
-      }
       continue;
     }
 
@@ -1119,17 +1115,47 @@ byte CalulatePageOffset(byte item) {
   return ((item - 1) / ITEMS_PER_PAGE) * ITEMS_PER_PAGE;
 }
 
+// FIX - single place that drives pinAmpOutOff, keeps software state in sync
+// LOW = outputs BLOCKED, HIGH = outputs OPEN
+void SetAmpOutput(bool open) {
+  ampOutputOpen = open;                                  // FIX - software state
+  digitalWrite(pinAmpOutOff, open ? HIGH : LOW);         // FIX - drive pin 13
+  debugln(open ? "AMP OUTPUT -> OPEN (HIGH)" : "AMP OUTPUT -> BLOCKED (LOW)");
+}
+
+// FIX - single place that drives pinAmpPower
+// LOW = amps ON, HIGH = amps OFF
+void SetAmpPower(bool on) {
+  ampPowerOn = on;                                       // FIX - software state
+  digitalWrite(pinAmpPower, on ? LOW : HIGH);            // FIX - drive pin 12
+  debugln(on ? "AMP POWER -> ON (LOW)" : "AMP POWER -> OFF (HIGH)");
+}
+
+// FIX - averaged A1 reading (4 samples) used for short detection
+int ReadShortLevel() {
+  long sum = 0;
+  for (int i = 0; i < 4; i++) sum += analogRead(pinLevelInput);
+  return (int)(sum >> 2);
+}
+
 // Emergency short protection on A1
 // Short -> only pinAmpOutOff goes LOW (outputs blocked), pinAmpPower stays ON (LOW)
-// After shortRetryMs -> outputs re-opened for SHRT_RECHECK_MS and checked again
+// After SHRT_RETRY_MS -> outputs re-opened for SHRT_RECHECK_MS and checked again
 void CheckAndHandleAmplifierShort() {
-  int rawValue = analogRead(pinLevelInput);
-  bool ampsPowered = (digitalRead(pinAmpPower) == LOW);     // NEW - amps power ON
-  bool outputOpen  = (digitalRead(pinAmpOutOff) == HIGH);   // NEW - amp outputs unblocked
+  int rawValue = ReadShortLevel();          // FIX - averaged reading
+  bool ampsPowered = ampPowerOn;            // FIX - software state, not pin read-back
+  bool outputOpen  = ampOutputOpen;         // FIX - software state, not pin read-back
+
+  // FIX - debug: show A1 level every 500 ms while outputs are open (use to tune SHRT_THRESHOLD_MAX)
+  static unsigned long lastDbgTime = 0;
+  if (outputOpen && millis() - lastDbgTime >= 500) {
+    lastDbgTime = millis();
+    debug("A1 raw: "); debugln(rawValue);
+  }
 
   // NEW - blocked: wait retry time, then re-check (outputs re-opened)
   if (emergencyShortDetected) {
-    if (millis() - shortBlockStartTime >= shortRetryMs) {
+    if (millis() - shortBlockStartTime >= SHRT_RETRY_MS) {
       UnblockAmpOutput();                     // re-open outputs for re-check
       shortRechecking = true;                 // NEW - re-check window active
       shortRecheckStartTime = millis();       // NEW
@@ -1138,8 +1164,8 @@ void CheckAndHandleAmplifierShort() {
   }
   // Amp short, output shorted - block Amp outputs only, amp power stays ON
   else if (ampsPowered && outputOpen && rawValue >= SHRT_THRESHOLD_MAX) {
+    debug("EMERGENCY: A1 raw="); debugln(rawValue);   // FIX - show level that triggered the block
     BlockAmpOutput();                         // NEW
-    debugln("EMERGENCY: Amplifier short detected! Blocking output, amps stay ON.");
   }
   // NEW - re-check window passed without short: output restored
   else if (shortRechecking) {
@@ -1172,7 +1198,7 @@ void BlockAmpOutput() {
   shortBlockStartTime = millis();         // block start (also treatment clock pause start)
   lastShortBeepTime = millis();
   lastShortBlinkTime = millis();
-  digitalWrite(pinAmpOutOff, LOW);        // Block Amps Outputs (pinAmpPower stays ON)
+  SetAmpOutput(false);                    // FIX - block Amps Outputs (pinAmpPower stays ON)
   gen.EnableOutput(false);                // NEW - mute generator while blocked
   tone(pinBeepOut, SHRT_BEEP_FREQ, SHRT_BEEP_DURATION);  // NEW - immediate beep
   DisplayAmpBlockedScreen();              // NEW - alert screen
@@ -1185,7 +1211,7 @@ void UnblockAmpOutput() {
   }
   emergencyShortDetected = false;
   noTone(pinBeepOut);
-  digitalWrite(pinAmpOutOff, HIGH);       // Enable Amps Outputs
+  SetAmpOutput(true);                     // FIX - enable Amps Outputs
   if (isGeneratingFrequency) {
     gen.EnableOutput(true);
   }
@@ -1233,11 +1259,31 @@ bool CheckBatteryLow() {
     batteryLowLatched   = true;           // stays until powered OFF manually
     batteryAlertPending = true;           // loop() draws the alert
     gen.EnableOutput(false);
-    digitalWrite(pinAmpOutOff, LOW);      // NEW - Block Amps Outputs
-    digitalWrite(pinAmpPower, HIGH);      // NEW - Power OFF amps
+    SetAmpOutput(false);                  // FIX - Block Amps Outputs (works in any state)
+    SetAmpPower(false);                   // FIX - Power OFF amps
     debugln("BATTERY LOW: outputs blocked, amps OFF.");
   }
   return batteryLowLatched;
+}
+
+// FIX - shared abort sequence (button press, battery low, or start blocked)
+void AbortTreatment() {
+  digitalWrite(pinOutputPause, LOW);  // Set to LOW on abort
+  SetAmpOutput(false);                // FIX - Block Amps Outputs
+  SetAmpPower(false);                 // FIX - Power OFF amps
+  gen.EnableOutput(false);
+  ResetShortProtection();             // NEW - clear block / re-check state
+  isSineWave = true;
+  digitalWrite(pinSignalType, HIGH);
+}
+
+// FIX - delay that keeps checking the battery, so the alert is not blind during tones
+void WaitBatterySafe(unsigned long ms) {
+  unsigned long start = millis();
+  while (millis() - start < ms) {
+    CheckBatteryLow();                // FIX - battery check (about every 1 s)
+    if (batteryLowLatched) return;    // FIX - stop waiting once latched
+  }
 }
 
 
@@ -1332,10 +1378,10 @@ bool GenerateFrequency() {
   gen.EnableOutput(true);
   digitalWrite(pinSignalType, isSineWave ? HIGH : LOW);
   // Amps Control pins
-  digitalWrite(pinAmpPower,    LOW);  // Power ON amps
+  SetAmpPower(true);                  // FIX - Power ON amps
   // wait 100 msec without blocking
   { unsigned long stabStart = millis(); while (millis() - stabStart < AMP_STAB_MS) { CheckAndHandleAmplifierShort(); if (btnEnterPressed) break; } }
-  digitalWrite(pinAmpOutOff,  HIGH);  // Enable Amps Outputs
+  SetAmpOutput(true);                 // FIX - Enable Amps Outputs
   // wait 100 msec without blocking
   { unsigned long stabStart = millis(); while (millis() - stabStart < AMP_STAB_MS) { CheckAndHandleAmplifierShort(); if (btnEnterPressed) break; } }
   digitalWrite(pinOutputPause, LOW);  // Start
@@ -1349,6 +1395,12 @@ bool GenerateFrequency() {
   treatmentScreenDrawn = false;
 
   for (int i = 0; i < numFreq; i++) {
+
+    // FIX - do not start a fragment if the button or battery already requested an abort
+    if (btnEnterPressed || batteryLowLatched) {
+      AbortTreatment();
+      return true;
+    }
 
     unsigned long fragmentStartMs = TreatmentClock();   // NEW - treatment clock
     unsigned long fragmentTargetEnd = fragmentStartMs + fragmentMs;
@@ -1366,6 +1418,7 @@ bool GenerateFrequency() {
     }
     //
     gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE, REG0, intFreqToGenerate);
+    if (emergencyShortDetected) gen.EnableOutput(false);   // FIX - ApplySignal() must not re-open output while blocked
     // 
     digitalWrite(pinOutputPause, LOW);
     //
@@ -1384,13 +1437,7 @@ bool GenerateFrequency() {
       CheckBatteryLow();
       // ABORT (button press or battery low)
       if (btnEnterPressed || batteryLowLatched) {
-        digitalWrite(pinOutputPause, LOW);  // Set to LOW on abort
-        digitalWrite(pinAmpOutOff,   LOW);  // Block Amps Outputs
-        digitalWrite(pinAmpPower,   HIGH);  // Power OFF amps
-        gen.EnableOutput(false);
-        ResetShortProtection();             // NEW - clear block / re-check state
-        isSineWave = true;
-        digitalWrite(pinSignalType, HIGH);
+        AbortTreatment();                   // FIX - shared abort sequence
         return true;
       }
       // NEW - output blocked by short: keep waiting for retry, treatment time frozen
@@ -1440,8 +1487,11 @@ bool GenerateFrequency() {
   gen.EnableOutput(false);
 
   //digitalWrite(pinOutputPause, HIGH);  // Comment out
-  digitalWrite(pinAmpOutOff,   LOW);     // Block Amps Outputs
-  digitalWrite(pinAmpPower,   HIGH);     // Power OFF amps
+  SetAmpOutput(false);                   // FIX - Block Amps Outputs
+  SetAmpPower(false);                    // FIX - Power OFF amps
+
+  // NEW - treatment time must be read before the short protection state is cleared
+  unsigned long actualElapsed = TreatmentClock() - sessionStart;   // NEW - treatment time (excludes blocked time)
   
   ResetShortProtection();                // NEW
   isGeneratingFrequency = false;
@@ -1457,7 +1507,6 @@ bool GenerateFrequency() {
   u8g2gfx.setCursor((320 - textWidth) / 2, 120);
   u8g2gfx.print("Finished!");
 
-  unsigned long actualElapsed = TreatmentClock() - sessionStart;   // NEW - treatment time (excludes blocked time)
   int totalMin = (actualElapsed / 1000) / 60;
   int totalSec = (actualElapsed / 1000) % 60;
   char timeBuf[20];
@@ -1665,12 +1714,14 @@ float MeasureBatteryVoltage() {
   return voltage / (R2 / (R1 + R2));
 }
 
+// FIX - beeps use WaitBatterySafe() instead of delay(), so a battery drop is not missed
 void PlayTone(int n) {
   for (int i = 0; i < n; i++) {
+    if (batteryLowLatched) break;     // FIX - no more beeps once the battery alert is latched
     tone(pinBeepOut, PIEZO_BEEP_TONE, PEIZO_BEEP_LENGTH);
-    delay(PEIZO_BEEP_LENGTH);
+    WaitBatterySafe(PEIZO_BEEP_LENGTH);   // FIX - was delay()
     noTone(pinBeepOut);
-    delay(PEIZO_BEEP_PAUSE);
+    WaitBatterySafe(PEIZO_BEEP_PAUSE);    // FIX - was delay()
   }
 }
 
@@ -1690,8 +1741,8 @@ void setup() {
   digitalWrite(pinSignalType, HIGH);            // HIGH for SIN default
   digitalWrite(pinSDPower,    HIGH);            // initially power OFF to SD card
   digitalWrite(pinOutputPause, LOW);            // default - output signal paused (LOW)
-  digitalWrite(pinAmpPower,   HIGH);            // Power OFF amps
-  digitalWrite(pinAmpOutOff,   LOW);            // Block Amps Outputs
+  SetAmpPower(false);                           // FIX - Power OFF amps
+  SetAmpOutput(false);                          // FIX - Block Amps Outputs
   pinMode(pinEncoderCW,  INPUT_PULLUP);
   pinMode(pinEncoderCCW, INPUT_PULLUP);
   pinMode(pinBtnEnter,   INPUT_PULLUP);
@@ -1741,6 +1792,8 @@ void loop() {
   // NEW - battery low latched: outputs blocked, amps OFF, only manual power OFF (long press) accepted
   CheckBatteryLow();
   if (batteryLowLatched) {
+    if (ampOutputOpen) SetAmpOutput(false);   // FIX - keep outputs blocked while latched
+    if (ampPowerOn)    SetAmpPower(false);    // FIX - keep amps OFF while latched
     if (batteryAlertPending) ShowBatteryLowAlert();
     if (btnEnterPressed) {
       if (buttonOutput == STATE_LONG) Shutdown();
@@ -1773,3 +1826,35 @@ void loop() {
     btnEnterPressed = false;
   }
 }
+
+/* ////////////////////Чек-лист стендовых испытаний//////////////////
+
+Установите DEBUG 1, 
+откройте Serial Monitor на 9600 и выполните эти тесты на реальном устройстве. 
+В каждой строке указаны ожидаемые состояния пинов 12 и 13.
+
+| Сценарий                        | Пин 12 (питание усилителя) | Пин 13 блок выходы  | Ожидаемое поведение
+--------------------------------------------------------------------------------------------------------
+1 | Холостой ход, батарея в норме | HIGH (ВЫКЛ)                | LOW (заблокировано) | Без изменений, без оповещений
+2 | Начало лечения, без КЗ        | LOW после старта           | HIGH через 100 мс   | Таймер работает, отображается сырое значение A1
+3 | Приложено КЗ (A1 ≥ 1020)      | LOW (остаётся)             | LOW                 | "AMPLIFIER SHORT!", звуковой сигнал, таймер заморожен, генератор отключён
+4 | КЗ сохраняется 4 с            | LOW                        | HIGH через 4 с, LOW снова при повторном обнаружении | Цикл повторной проверки повторяется
+5 | КЗ снято во время блокировки  | LOW                        | HIGH через 4 с, остаётся HIGH                       | "OUTPUT RESTORED", таймер возобновляется
+6 | КЗ во время окна повторной проверки | LOW                  | Повторная блокировка примерно через 100 мс          | Оповещение о блокировке снова показано
+7 | Нажатие кнопки во время блокировки  | HIGH                 | LOW                                                 | Возврат в меню, без экрана "Finished"
+8 | Нажатие кнопки во время повторной проверки | HIGH          | LOW                                                 | Возврат в меню
+9 | КЗ в стабилизации (перед первым фрагментом) | LOW          | LOW                 | Генератор остаётся отключённым до повторной попытки, затем запускается нормально
+10 | Батарея падает до ≤ 3.3 В во время лечения | HIGH         | LOW                 | Лечение прервано после примерно 3 чтений (около 3 с), оповещение зафиксировано
+11 | Батарея падает во время межфрагментного сигнала | HIGH    | LOW                 | Останавливается примерно за 1 с, без следующего фрагмента
+12 | Низкая батарея в холостом режиме | HIGH                   | LOW                 | Оповещение зафиксировано, короткое нажатие игнорируется, длинное нажатие выключает питание
+13 | Низкая батарея в AngelZ      | HIGH                       | LOW                 | Сессия останавливается, без "AngelZ Finished!"
+14 | Нормальное завершение        | HIGH                       | LOW                 | "Finished!" и время исключает заблокированные секунды
+15 | Энкодер повернут во время блокировки | LOW                | LOW                 | Прокрутка игнорируется до снятия блокировки
+16 | SD-карта извлечена           | без изменений              | без изменений       | Защита всё ещё работает (без использования SD)
+17 | SHRT_RETRY_SEC установлен на 2 или 6 | — | — | Ошибка компиляции
+
+Сценарии, требующие ваших измерений: 
+строка 3 (подтвердите, что КЗ действительно читается на уровне 1020 или выше с DEBUG 1), 
+строка 10 (напряжение батареи под нагрузкой усилителя) и 
+AngelZ (решите, должен ли он управлять усилителями).
+*/
