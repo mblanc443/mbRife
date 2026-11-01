@@ -922,7 +922,7 @@ void LoadDefaultDiagnoses() {
 }
 
 void InitializeSDAndSettings() {
-  if (!SD.begin()) {
+  if (!SD.begin(SD_CS)) {
     DisplayErrorMessage("SD card is not present");
     delay(3000);
     LoadDefaultDiagnoses();
