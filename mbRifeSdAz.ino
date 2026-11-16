@@ -1,17 +1,10 @@
-I interpreted **“Output Short signal”** as setting **pin 11 HIGH after an A1 short has remained blocked for two seconds**. The safety response is **not delayed**: pin 13 blocks the amplifier outputs and the AD9833 is disabled immediately. Pin 11 still goes HIGH immediately for normal frequency changes, aborts, and low-battery shutdown.
-
-The changes below also reverse pin 8, paint the intro background in one pass, and remove the duplicate menu-list draw at startup. **I cannot run an Arduino compiler or test the physical pins from this chat**, so I have not marked a compile or bench test as passed. The verification steps follow the sketch.
-
-```cpp
 // Rife Machine - Arduino Mega2560 + ILI9341 + AD9833 + SD card + AngelZ
-// Pin 8 signal type indicator: SIN = LOW (0), SQUARE = HIGH (1)
-// Pin A1 measures treatment output and protects from shorts
-// VU-style level indicator: 20 vertical bars, 14 green + 6 red, gray when no signal
+//
 // Пин 8: "Тип Сигнала" по умолчанию установлен в 0 (Синус)
 // Short protection blocks Amp outputs immediately; delayed pin 11 short signal
-// Защита от короткого по выходу: выходы усилителей блокируются сразу;
-// сигнал на пине 11 устанавливается через 2 секунды, питание остаётся включенным.
-// FIX - pins 12/13 driven only through SetAmpPower()/SetAmpOutput()
+// Защита от короткого по выходу: выходы усилителей блокируются сразу
+// сигнал на пине 11 устанавливается через 2 секунды, питание остаётся включенным
+// pins 12/13 driven only through SetAmpPower()/SetAmpOutput()
 
 #include <EEPROM.h>
 #include <AD9833.h>
