@@ -1,10 +1,20 @@
 // Rife Machine - Arduino Mega2560 + ILI9341 + AD9833 + SD card + AngelZ
-//
+// Pin 8 signal type indicator: SIN = LOW (0), SQUARE = HIGH (1)
+// Pin A1 measures treatment output and protects from shorts
+// VU-style level indicator: 20 vertical bars, 14 green + 6 red, gray when no signal
 // Пин 8: "Тип Сигнала" по умолчанию установлен в 0 (Синус)
-// Short protection blocks Amp outputs immediately; delayed pin 11 short signal
-// Защита от короткого по выходу: выходы усилителей блокируются сразу
-// сигнал на пине 11 устанавливается через 2 секунды, питание остаётся включенным
-// pins 12/13 driven only through SetAmpPower()/SetAmpOutput()
+// Short protection blocks Amp outputs immediately, pin11 HIGH immediately on short
+// 2 sec non-blocking delay after Enter, before pin11 LOW, with A1 short test
+// FIX - pins 12/13 driven only through SetAmpPower()/SetAmpOutput()
+// FIX - pin 8 driven only through SetSignalType()
+
+// 10-16-26
+// Removed `OUTPUT_SHORT_DELAY_MS / shortSignalAsserted` from `CheckAndHandleAmplifierShort()` - that delayed `pin11 HIGH` *after* short.
+// Added `TREATMENT_START_DELAY_MS + WaitTreatmentStartDelay()` - `millis()` loop, no `delay(2000)`.
+// `GenerateFrequency()` + `OpenAngelZ()`: `Enter -> pin11 HIGH -> amps ON -> outputs OPEN for A1 test -> 2sec wait with `CheckAndHandleAmplifierShort()+CheckBatteryLow()+abort` -> only if `!emergencyShortDetected` then `pin11 LOW`. `sessionStart=TreatmentClock()` after wait so wait not counted.
+// Short during wait stays `pin11 HIGH / pin13 LOW / gen OFF`, retry logic handles it.
+// `pin8` via `SetSignalType()`, i
+// ntro single-pass via `RoundedRowInset()`.
 
 #include <EEPROM.h>
 #include <AD9833.h>
@@ -26,7 +36,7 @@
 #endif
 
 // USER CONFIGURATION
-#define SHRT_RETRY_SEC       4      // seconds, allowed range 3..5
+#define SHRT_RETRY_SEC       4
 #define SHRT_RETRY_MIN_SEC   3
 #define SHRT_RETRY_MAX_SEC   5
 #if (SHRT_RETRY_SEC < SHRT_RETRY_MIN_SEC) || (SHRT_RETRY_SEC > SHRT_RETRY_MAX_SEC)
@@ -34,12 +44,9 @@
 #endif
 #define SHRT_RETRY_MS        (SHRT_RETRY_SEC * 1000UL)
 
-// NEW - pin 11 is asserted after 2 seconds of a sustained amplifier short.
-// NEW - this timer does not delay the immediate pin 13 / generator protection.
-#define OUTPUT_SHORT_DELAY_MS 2000UL
-#if OUTPUT_SHORT_DELAY_MS >= SHRT_RETRY_MS
-  #error "OUTPUT_SHORT_DELAY_MS must be less than SHRT_RETRY_MS"
-#endif
+// NEW - 2 sec non-blocking wait after Enter, before pin11 enabled (LOW)
+// NEW - during this window output is tested for short, battery/abort stay alive
+#define TREATMENT_START_DELAY_MS 2000UL
 
 // Pins
 #define pinEncoderCW     2
@@ -51,7 +58,7 @@
 #define pinSignalType    8   // FIX - SIN = LOW, SQUARE = HIGH
 #define pinGenCS         9
 #define SD_CS           10
-#define pinOutputPause  11   // HIGH = output inhibited; delayed only for an A1 short
+#define pinOutputPause  11   // HIGH = OFF blocks output, LOW = ON enables output
 #define pinAmpPower     12   // HIGH = amplifier power OFF
 #define pinAmpOutOff    13   // FIX - LOW = outputs BLOCKED, HIGH = outputs OPEN
 #define pinBtnEnter     21
@@ -61,31 +68,24 @@
 #define TFT_DC          48
 #define TFT_RST         49
 
-// ILI9341 (Hardware SPI on Mega: SCK=52, MOSI=51)
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_RST);
 U8G2_FOR_ADAFRUIT_GFX u8g2gfx;
-
-// AD9833
 AD9833 gen(pinGenCS);
 
-// Gold color palette
 #define GOLD1  tft.color565(255, 215,   0)
 #define GOLD2  tft.color565(218, 165,  32)
 #define GOLD3  tft.color565(184, 134,  11)
 #define GOLD4  tft.color565(255, 236, 139)
 
-// Level indicator VU colors
 #define LEVEL_GREEN_ACTIVE   tft.color565(0,  220,  0)
 #define LEVEL_GREEN_DIM      tft.color565(0,   60,  0)
 #define LEVEL_RED_ACTIVE     tft.color565(255, 30, 30)
 #define LEVEL_RED_DIM        tft.color565(60,   0,  0)
 #define LEVEL_GRAY_NOSIGNAL  tft.color565(80,  80, 80)
 
-// Capacity
 #define WARN_DIAGNOSES_THRESHOLD 100
 #define NAME_MAX_LEN              28
 
-// Battery voltage divider
 const float R1 = 32000.0;
 const float R2 = 8000.0;
 const float referenceVoltage = 1.1;
@@ -93,7 +93,6 @@ const float BATTERY_LOW_V    = 3.3;
 #define BATTERY_LOW_COUNT     3
 #define BATTERY_CHECK_MS   1000UL
 
-// Default diagnosis names with time per frequency in seconds
 const char* default_diagnoses_raw[] = {
   "Day1-Love expands:780",
   "Day2-Cellular and DNA repair:480",
@@ -102,7 +101,6 @@ const char* default_diagnoses_raw[] = {
   "AngelZ:0"
 };
 
-// Frequencies in PROGMEM
 const int frequencies[] PROGMEM = {
   465,0,0,0,0,0,0,0,0,0,
   528,0,0,0,0,0,0,0,0,0,
@@ -111,7 +109,6 @@ const int frequencies[] PROGMEM = {
   0,0,0,0,0,0,0,0,0,0
 };
 
-// Dynamic runtime arrays
 char     **diagnosis_names       = NULL;
 int      *diagnosis_time_sec     = NULL;
 int      **diagnosis_frequencies = NULL;
@@ -129,7 +126,6 @@ const int PEIZO_BEEP_PAUSE  =  500;
 
 const byte ITEMS_PER_PAGE = 8;
 
-// State variables
 byte selectedItem     = 1;
 byte prevSelectedItem = 1;
 byte pageOffset       = 0;
@@ -146,10 +142,8 @@ volatile int  buttonOutput    = 0;
 enum {STATE_NORMAL, STATE_SHORT, STATE_LONG};
 long LONG_DELTA     = 1500UL;
 long DEBOUNCE_DELTA =   30UL;
-
 byte eepromAddress = 0;
 
-// Frame / list constants
 const int FRAME_X =   2;
 const int FRAME_Y =   2;
 const int FRAME_W = 316;
@@ -158,7 +152,6 @@ const int LIST_Y_START    = 50;
 const int ITEM_HEIGHT     = 24;
 const int TITLE_BAR_HIGHT = 30;
 
-// Level indicator constants - VU style with 20 vertical bars
 #define LEVEL_LABEL_Y      210
 #define LEVEL_LABEL_H       18
 #define LEVEL_BAR_Y        228
@@ -170,8 +163,6 @@ const int TITLE_BAR_HIGHT = 30;
 #define LEVEL_GREEN_BARS    14
 #define LEVEL_RED_BARS       6
 
-// Emergency short protection on A1, block Amp Output only
-// If a real short reads below 1020 on A1, adjust this value using DEBUG output.
 #define SHRT_THRESHOLD_MAX 1020
 #define SHRT_BEEP_FREQ     1000
 #define SHRT_BEEP_INTERVAL 500
@@ -188,7 +179,6 @@ static int  prevLevelBars        =      -1;
 static bool prevLevelNoSignal    =    true;
 static bool treatmentScreenDrawn =   false;
 
-// Emergency short protection state
 bool emergencyShortDetected = false;
 unsigned long shortBlockStartTime = 0;
 unsigned long lastShortBeepTime = 0;
@@ -196,20 +186,15 @@ unsigned long lastShortCheckTime = 0;
 bool          shortRechecking = false;
 unsigned long shortRecheckStartTime = 0;
 unsigned long shortPausedTotal = 0;
-// NEW - prevents repeated writes to pin 11 during one blocked interval.
-bool          shortSignalAsserted = false;
 
-// Software state of the amp pins (single source of truth)
 bool ampOutputOpen = false;
 bool ampPowerOn    = false;
 
-// Battery low protection state
 bool          batteryLowLatched   = false;
 bool          batteryAlertPending = false;
 byte          batteryLowCount     = 0;
 unsigned long lastBatteryCheckTime = 0;
 
-// ==== AngelZ Constants ====
 #define     ANGELZ_TOTAL_POINTS           48
 const int   ANGELZ_SPLIT_POINT      =     24;
 const int   ANGELZ_NUMBER_OF_CYCLES =     59;
@@ -242,12 +227,9 @@ float angelz_tau[ANGELZ_NUMBER_OF_CYCLES] = {
   5.2, 7.4, 4.0, 5.5, 6.0, 6.5, 5.7, 6.8, 7.1
 };
 
-// FORWARD DECLARATIONS
 void DisplayErrorMessage(const char* message, uint16_t color = ILI9341_RED);
-void DisplayTreatInProgressScreen(int currentFreqIndex, int selectedItem,
-                                  unsigned long msLeft, bool forceFull = false);
-void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msLeft,
-                                       bool forceFull = false);
+void DisplayTreatInProgressScreen(int currentFreqIndex, int selectedItem, unsigned long msLeft, bool forceFull = false);
+void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msLeft, bool forceFull = false);
 void DisplayIntroScreen(void);
 void DrawTitleBar();
 void DrawBattery();
@@ -266,8 +248,7 @@ int8_t AnalyzeEncoderChange();
 void OnButtonPress();
 void DrawIntroFrame();
 void DrawGoldenCrown(int cx, int topY);
-// NEW - compute rounded frame edges without a full-screen RAM buffer.
-int RoundedRowInset(int row, int height, int radius);
+int RoundedRowInset(int row, int height, int radius); // NEW - single-pass intro helper
 float MeasureBatteryVoltage();
 void PlayTone(int n);
 bool AddDiagnosis(const char* nameWithTime, const int* freqs);
@@ -289,13 +270,12 @@ void ShowBatteryLowAlert();
 void ReleaseAmplifierBlock();
 void SetAmpOutput(bool open);
 void SetAmpPower(bool on);
-// FIX - centralize pin 8 polarity and the corresponding software state.
-void SetSignalType(bool sine);
+void SetSignalType(bool sine); // FIX - central pin8 polarity
 int  ReadShortLevel();
 void AbortTreatment();
 void WaitBatterySafe(unsigned long ms);
+bool WaitTreatmentStartDelay(); // NEW - 2sec non-blocking wait + short test before pin11 LOW
 
-// AngelZ Sequences Class
 class Sequences {
   private:
     AD9833 *m_pgen;
@@ -303,133 +283,90 @@ class Sequences {
     Sequences() {}
     Sequences(AD9833 *pGen);
     void Execute10khzSequence();
-    float GetDelaySequence(int currentPoint, float valueStart, float valueMax,
-                           float tau, int splitPoint);
+    float GetDelaySequence(int currentPoint, float valueStart, float valueMax, float tau, int splitPoint);
 };
 
 Sequences::Sequences(AD9833 *pGen) : m_pgen(pGen) {}
-
 void Sequences::Execute10khzSequence() {
   for (int pulseNum = 0; pulseNum < 20; pulseNum++) {
     m_pgen->EnableOutput(true);
     m_pgen->ApplySignal(SQUARE_WAVE, REG0, 10000);
   }
 }
-
-float Sequences::GetDelaySequence(int currentPoint, float valueStart,
-                                  float valueMax, float tau, int splitPoint) {
+float Sequences::GetDelaySequence(int currentPoint, float valueStart, float valueMax, float tau, int splitPoint) {
   float delayMs;
   if (currentPoint < splitPoint) {
-    delayMs = valueStart + (valueMax - valueStart) *
-              (1 - exp(-currentPoint / tau));
+    delayMs = valueStart + (valueMax - valueStart) * (1 - exp(-currentPoint / tau));
   } else {
     delayMs = valueMax * exp(-(currentPoint - splitPoint) / tau);
   }
   return delayMs * ANGELZ_DELAY_SCALE;
 }
 
-// DYNAMIC ARRAY MANAGEMENT
 bool EnsureDiagnosisCapacity() {
   if (num_diagnoses < capacity_diagnoses) return true;
-
   int newCapacity = capacity_diagnoses + 10;
-
-  char **newNames = (char**)realloc(diagnosis_names,
-                                    newCapacity * sizeof(char*));
+  char **newNames = (char**)realloc(diagnosis_names, newCapacity * sizeof(char*));
   if (!newNames) return false;
   diagnosis_names = newNames;
-
   for (int i = capacity_diagnoses; i < newCapacity; i++) {
     diagnosis_names[i] = (char*)malloc((NAME_MAX_LEN + 1) * sizeof(char));
     if (!diagnosis_names[i]) return false;
     diagnosis_names[i][0] = '\0';
   }
-
-  int *newTimes = (int*)realloc(diagnosis_time_sec,
-                                newCapacity * sizeof(int));
+  int *newTimes = (int*)realloc(diagnosis_time_sec, newCapacity * sizeof(int));
   if (!newTimes) return false;
   diagnosis_time_sec = newTimes;
-  for (int i = capacity_diagnoses; i < newCapacity; i++) {
-    diagnosis_time_sec[i] = 60;
-  }
-
-  int **newFreqs = (int**)realloc(diagnosis_frequencies,
-                                  newCapacity * sizeof(int*));
+  for (int i = capacity_diagnoses; i < newCapacity; i++) diagnosis_time_sec[i] = 60;
+  int **newFreqs = (int**)realloc(diagnosis_frequencies, newCapacity * sizeof(int*));
   if (!newFreqs) return false;
   diagnosis_frequencies = newFreqs;
-
   for (int i = capacity_diagnoses; i < newCapacity; i++) {
     diagnosis_frequencies[i] = (int*)malloc(10 * sizeof(int));
     if (!diagnosis_frequencies[i]) return false;
     memset(diagnosis_frequencies[i], 0, 10 * sizeof(int));
   }
-
   capacity_diagnoses = newCapacity;
   return true;
 }
 
 void FreeDiagnosisArrays() {
   if (diagnosis_names) {
-    for (int i = 0; i < capacity_diagnoses; i++) {
-      if (diagnosis_names[i]) free(diagnosis_names[i]);
-    }
-    free(diagnosis_names);
-    diagnosis_names = NULL;
+    for (int i = 0; i < capacity_diagnoses; i++) if (diagnosis_names[i]) free(diagnosis_names[i]);
+    free(diagnosis_names); diagnosis_names = NULL;
   }
-  if (diagnosis_time_sec) {
-    free(diagnosis_time_sec);
-    diagnosis_time_sec = NULL;
-  }
+  if (diagnosis_time_sec) { free(diagnosis_time_sec); diagnosis_time_sec = NULL; }
   if (diagnosis_frequencies) {
-    for (int i = 0; i < capacity_diagnoses; i++) {
-      if (diagnosis_frequencies[i]) free(diagnosis_frequencies[i]);
-    }
-    free(diagnosis_frequencies);
-    diagnosis_frequencies = NULL;
+    for (int i = 0; i < capacity_diagnoses; i++) if (diagnosis_frequencies[i]) free(diagnosis_frequencies[i]);
+    free(diagnosis_frequencies); diagnosis_frequencies = NULL;
   }
-  num_diagnoses = 0;
-  capacity_diagnoses = 0;
+  num_diagnoses = 0; capacity_diagnoses = 0;
 }
 
 bool AddDiagnosis(const char* nameWithTime, const int* freqs) {
   if (!EnsureDiagnosisCapacity()) return false;
-
   if (num_diagnoses == WARN_DIAGNOSES_THRESHOLD) {
-    DisplayErrorMessage("Diagnoses count exceeded 100 - continuing...",
-                        ILI9341_YELLOW);
+    DisplayErrorMessage("Diagnoses count exceeded 100 - continuing...", ILI9341_YELLOW);
     delay(2000);
   }
-
   String s = String(nameWithTime);
   int colonPos = s.lastIndexOf(':');
-  String nameStr;
-  int timeSec = 60;
-
+  String nameStr; int timeSec = 60;
   if (colonPos > 0) {
     nameStr = s.substring(0, colonPos);
     String timeStr = s.substring(colonPos + 1);
-    timeStr.trim();
-    nameStr.trim();
+    timeStr.trim(); nameStr.trim();
     timeSec = timeStr.toInt();
     if (timeSec <= 0 && nameStr != "AngelZ") timeSec = 60;
-  } else {
-    nameStr = s;
-    nameStr.trim();
-  }
-
+  } else { nameStr = s; nameStr.trim(); }
   strncpy(diagnosis_names[num_diagnoses], nameStr.c_str(), NAME_MAX_LEN);
   diagnosis_names[num_diagnoses][NAME_MAX_LEN] = '\0';
   diagnosis_time_sec[num_diagnoses] = timeSec;
-
-  for (int j = 0; j < 10; j++) {
-    diagnosis_frequencies[num_diagnoses][j] = freqs[j];
-  }
-
+  for (int j = 0; j < 10; j++) diagnosis_frequencies[num_diagnoses][j] = freqs[j];
   num_diagnoses++;
   return true;
 }
 
-// LEVEL INDICATOR - VU Style with 20 Vertical Bars
 int ReadLevelValue() {
   long sum = 0;
   for (int i = 0; i < 4; i++) sum += analogRead(pinLevelInput);
@@ -444,29 +381,17 @@ void DrawLevelIndicator(int level, bool noSignal, bool forceFull) {
   int litBars = level;
   if (litBars < 0) litBars = 0;
   if (litBars > LEVEL_NUM_BARS) litBars = LEVEL_NUM_BARS;
-
   bool needFullRedraw = forceFull || (noSignal != prevLevelNoSignal);
-
   if (needFullRedraw) {
     for (int i = 0; i < LEVEL_NUM_BARS; i++) {
       int x = i * LEVEL_BAR_WIDTH;
       int barW = LEVEL_BAR_WIDTH - LEVEL_BAR_GAP;
       uint16_t color;
-
-      if (noSignal) {
-        color = LEVEL_GRAY_NOSIGNAL;
-      } else if (i < litBars) {
-        color = (i < LEVEL_GREEN_BARS) ?
-                LEVEL_GREEN_ACTIVE : LEVEL_RED_ACTIVE;
-      } else {
-        color = (i < LEVEL_GREEN_BARS) ?
-                LEVEL_GREEN_DIM : LEVEL_RED_DIM;
-      }
-
+      if (noSignal) color = LEVEL_GRAY_NOSIGNAL;
+      else if (i < litBars) color = (i < LEVEL_GREEN_BARS) ? LEVEL_GREEN_ACTIVE : LEVEL_RED_ACTIVE;
+      else color = (i < LEVEL_GREEN_BARS) ? LEVEL_GREEN_DIM : LEVEL_RED_DIM;
       tft.fillRect(x, LEVEL_BAR_Y, barW, LEVEL_BAR_H, color);
     }
-
-    // Draw label above bars
     tft.fillRect(0, LEVEL_LABEL_Y, 320, LEVEL_LABEL_H, ILI9341_BLACK);
     u8g2gfx.setFont(u8g2_font_helvB14_te);
     u8g2gfx.setBackgroundColor(ILI9341_BLACK);
@@ -477,60 +402,35 @@ void DrawLevelIndicator(int level, bool noSignal, bool forceFull) {
       u8g2gfx.setCursor((320 - tw) / 2, LEVEL_LABEL_Y + 15);
       u8g2gfx.print(noSigStr);
     } else {
-      u8g2gfx.setForegroundColor(
-        (litBars >= 16) ? LEVEL_RED_ACTIVE : ILI9341_WHITE
-      );
-      char digBuf[16];
-      sprintf(digBuf, "Level: %d", litBars);
+      u8g2gfx.setForegroundColor((litBars >= 16) ? LEVEL_RED_ACTIVE : ILI9341_WHITE);
+      char digBuf[16]; sprintf(digBuf, "Level: %d", litBars);
       int tw = u8g2gfx.getUTF8Width(digBuf);
       u8g2gfx.setCursor((320 - tw) / 2, LEVEL_LABEL_Y + 15);
       u8g2gfx.print(digBuf);
     }
-
-    prevLevelBars = litBars;
-    prevLevelValue = level;
-    prevLevelNoSignal = noSignal;
+    prevLevelBars = litBars; prevLevelValue = level; prevLevelNoSignal = noSignal;
     return;
   }
-
-  // Incremental update - only redraw bars that changed state
   if (!noSignal && litBars != prevLevelBars) {
     int fromBar = min(litBars, prevLevelBars);
     int toBar = max(litBars, prevLevelBars);
-    if (prevLevelBars < 0) {
-      fromBar = 0;
-      toBar = LEVEL_NUM_BARS;
-    }
-
+    if (prevLevelBars < 0) { fromBar = 0; toBar = LEVEL_NUM_BARS; }
     for (int i = fromBar; i < toBar; i++) {
       int x = i * LEVEL_BAR_WIDTH;
       int barW = LEVEL_BAR_WIDTH - LEVEL_BAR_GAP;
       uint16_t color;
-
-      if (i < litBars) {
-        color = (i < LEVEL_GREEN_BARS) ?
-                LEVEL_GREEN_ACTIVE : LEVEL_RED_ACTIVE;
-      } else {
-        color = (i < LEVEL_GREEN_BARS) ?
-                LEVEL_GREEN_DIM : LEVEL_RED_DIM;
-      }
-
+      if (i < litBars) color = (i < LEVEL_GREEN_BARS) ? LEVEL_GREEN_ACTIVE : LEVEL_RED_ACTIVE;
+      else color = (i < LEVEL_GREEN_BARS) ? LEVEL_GREEN_DIM : LEVEL_RED_DIM;
       tft.fillRect(x, LEVEL_BAR_Y, barW, LEVEL_BAR_H, color);
     }
-
     prevLevelBars = litBars;
   }
-
-  // Update label if value changed
   if (!noSignal && (level != prevLevelValue || forceFull)) {
     tft.fillRect(0, LEVEL_LABEL_Y, 320, LEVEL_LABEL_H, ILI9341_BLACK);
     u8g2gfx.setFont(u8g2_font_helvB14_te);
     u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-    u8g2gfx.setForegroundColor(
-      (litBars >= 16) ? LEVEL_RED_ACTIVE : ILI9341_WHITE
-    );
-    char digBuf[16];
-    sprintf(digBuf, "Level: %d", litBars);
+    u8g2gfx.setForegroundColor((litBars >= 16) ? LEVEL_RED_ACTIVE : ILI9341_WHITE);
+    char digBuf[16]; sprintf(digBuf, "Level: %d", litBars);
     int tw = u8g2gfx.getUTF8Width(digBuf);
     u8g2gfx.setCursor((320 - tw) / 2, LEVEL_LABEL_Y + 15);
     u8g2gfx.print(digBuf);
@@ -538,10 +438,8 @@ void DrawLevelIndicator(int level, bool noSignal, bool forceFull) {
   }
 }
 
-// DISPLAY HELPER FUNCTIONS
 void DisplayErrorMessage(const char* message, uint16_t color) {
-  tft.fillRect(0, TITLE_BAR_HIGHT, 320,
-               240 - TITLE_BAR_HIGHT, ILI9341_BLACK);
+  tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_8x13_t_cyrillic);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   u8g2gfx.setForegroundColor(color);
@@ -551,10 +449,8 @@ void DisplayErrorMessage(const char* message, uint16_t color) {
   u8g2gfx.print(message);
 }
 
-// Alert screen while Amp outputs are blocked by short (amps stay ON)
 void DisplayAmpBlockedScreen() {
-  tft.fillRect(0, TITLE_BAR_HIGHT, 320,
-               240 - TITLE_BAR_HIGHT, ILI9341_BLACK);
+  tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_helvB14_te);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   u8g2gfx.setForegroundColor(ILI9341_RED);
@@ -564,14 +460,12 @@ void DisplayAmpBlockedScreen() {
   u8g2gfx.print(line1);
   u8g2gfx.setForegroundColor(ILI9341_YELLOW);
   char line2[32];
-  sprintf(line2, "Output blocked, retry %us",
-          (unsigned int)SHRT_RETRY_SEC);
+  sprintf(line2, "Output blocked, retry %us", (unsigned int)SHRT_RETRY_SEC);
   int w2 = u8g2gfx.getUTF8Width(line2);
   u8g2gfx.setCursor((320 - w2) / 2, 140);
   u8g2gfx.print(line2);
 }
 
-// Battery low alert, stays on screen until powered OFF manually
 void ShowBatteryLowAlert() {
   batteryAlertPending = false;
   tft.fillScreen(ILI9341_BLACK);
@@ -590,9 +484,8 @@ void ShowBatteryLowAlert() {
 }
 
 void DisplayIntroScreen(void) {
-  // FIX - DrawIntroFrame() paints the background once; no preliminary clear.
+  // FIX - DrawIntroFrame paints background once, no preliminary clear
   DrawIntroFrame();
-
   u8g2gfx.setFont(u8g2_font_helvB24_te);
   u8g2gfx.setForegroundColor(GOLD2);
   int textWidth = u8g2gfx.getUTF8Width("Dr. Royal Rife");
@@ -601,9 +494,7 @@ void DisplayIntroScreen(void) {
   textWidth = u8g2gfx.getUTF8Width("Healing Machine");
   u8g2gfx.setCursor((320 - textWidth) / 2, 120);
   u8g2gfx.print("Healing Machine");
-
   DrawGoldenCrown(160, 135);
-
   u8g2gfx.setFont(u8g2_font_7x14_tr);
   u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
   textWidth = u8g2gfx.getUTF8Width("by kd2cmo 2026");
@@ -653,11 +544,8 @@ void SetSelectedItem(byte item) {
   DrawList();
 }
 
-// TREATMENT IN-PROGRESS SCREEN (regular) - with VU level bars
-void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem,
-                                  unsigned long msLeft, bool forceFull) {
+void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem, unsigned long msLeft, bool forceFull) {
   const int SCREEN_W = 320;
-  const int SCREEN_H = 240;
   const int LEFT_W = SCREEN_W / 3;
   const int RIGHT_W = SCREEN_W - LEFT_W;
   const int BAR_AREA_H = LEVEL_LABEL_Y - TITLE_BAR_HIGHT;
@@ -665,27 +553,20 @@ void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem,
   const int BAR_W = LEFT_W - 8;
   const int BAR_X = 4;
   const int BAR_Y0 = TITLE_BAR_HIGHT;
-
   int diagIdx = selItem - 1;
-
   if (forceFull || !treatmentScreenDrawn) {
     tft.fillScreen(ILI9341_BLACK);
-
-    // Title bar: "<diagnose>:<configured_time>" - static, drawn once
     tft.fillRect(0, 0, SCREEN_W, TITLE_BAR_HIGHT, ILI9341_BLUE);
     u8g2gfx.setFont(u8g2_font_helvB14_te);
     u8g2gfx.setBackgroundColor(ILI9341_BLUE);
     u8g2gfx.setForegroundColor(ILI9341_YELLOW);
     char titleBuf[48];
-    snprintf(titleBuf, sizeof(titleBuf), "%s:%d",
-             diagnosis_names[diagIdx], diagnosis_time_sec[diagIdx]);
+    snprintf(titleBuf, sizeof(titleBuf), "%s:%d", diagnosis_names[diagIdx], diagnosis_time_sec[diagIdx]);
     int titleWidth = u8g2gfx.getUTF8Width(titleBuf);
     int titleX = (SCREEN_W - titleWidth) / 2;
     if (titleX < 2) titleX = 2;
     u8g2gfx.setCursor(titleX, 22);
     u8g2gfx.print(titleBuf);
-
-    // Signal type indicator on title bar
     u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic);
     u8g2gfx.setBackgroundColor(ILI9341_BLUE);
     u8g2gfx.setForegroundColor(ILI9341_YELLOW);
@@ -693,126 +574,91 @@ void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem,
     int sigWidth = u8g2gfx.getUTF8Width(sigStr);
     u8g2gfx.setCursor(320 - sigWidth - 4, 24);
     u8g2gfx.print(sigStr);
-
     for (int i = 0; i < 10; i++) {
       int freq = diagnosis_frequencies[diagIdx][i];
       int y = BAR_Y0 + i * BAR_H;
       uint16_t barColor;
-      if (freq == 0) {
-        barColor = tft.color565(20, 20, 20);
-      } else {
-        barColor = (i == currentFreqIndex) ?
-                   ILI9341_GREENYELLOW : ILI9341_DARKGREEN;
-      }
-      uint16_t borderColor =
-        (i == currentFreqIndex && freq > 0) ?
-        ILI9341_WHITE : barColor;
+      if (freq == 0) barColor = tft.color565(20, 20, 20);
+      else barColor = (i == currentFreqIndex) ? ILI9341_GREENYELLOW : ILI9341_DARKGREEN;
+      uint16_t borderColor = (i == currentFreqIndex && freq > 0) ? ILI9341_WHITE : barColor;
       tft.fillRect(BAR_X, y, BAR_W, BAR_H - 1, barColor);
-      if (i == currentFreqIndex && freq > 0)
-        tft.drawRect(BAR_X, y, BAR_W, BAR_H - 1, borderColor);
+      if (i == currentFreqIndex && freq > 0) tft.drawRect(BAR_X, y, BAR_W, BAR_H - 1, borderColor);
       u8g2gfx.setFont(u8g2_font_helvB14_te);
       u8g2gfx.setBackgroundColor(barColor);
       u8g2gfx.setForegroundColor(ILI9341_PINK);
       char freqStr[8];
-      if (freq > 0) sprintf(freqStr, "%d", freq);
-      else strcpy(freqStr, "-");
+      if (freq > 0) sprintf(freqStr, "%d", freq); else strcpy(freqStr, "-");
       int textWidth = u8g2gfx.getUTF8Width(freqStr);
       tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 4, barColor);
-      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2,
-                        y + BAR_H / 2 + 6);
+      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
       u8g2gfx.print(freqStr);
     }
-
-    // Draw VU level indicator (full) - initially "no signal"
     DrawLevelIndicator(0, true, true);
-
     u8g2gfx.setFont(u8g2_font_helvB24_te);
     u8g2gfx.setBackgroundColor(ILI9341_BLACK);
     u8g2gfx.setForegroundColor(ILI9341_WHITE);
     int labelWidth = u8g2gfx.getUTF8Width("Remaining");
     u8g2gfx.setCursor(LEFT_W + (RIGHT_W - labelWidth) / 2, 100);
     u8g2gfx.print("Remaining");
-
     strcpy(prevTimeStr, "99:99");
     prevFreqIndex = currentFreqIndex;
     treatmentScreenDrawn = true;
   }
-
   if (prevFreqIndex != currentFreqIndex) {
     if (prevFreqIndex >= 0 && prevFreqIndex < 10) {
       int freq = diagnosis_frequencies[diagIdx][prevFreqIndex];
       int y = BAR_Y0 + prevFreqIndex * BAR_H;
-      uint16_t barColor =
-        (freq == 0) ? tft.color565(20, 20, 20) : ILI9341_DARKGREEN;
+      uint16_t barColor = (freq == 0) ? tft.color565(20, 20, 20) : ILI9341_DARKGREEN;
       tft.fillRect(BAR_X, y, BAR_W, BAR_H - 1, barColor);
       u8g2gfx.setFont(u8g2_font_helvB14_te);
       u8g2gfx.setBackgroundColor(barColor);
       u8g2gfx.setForegroundColor(ILI9341_PINK);
       char freqStr[8];
-      if (freq > 0) sprintf(freqStr, "%d", freq);
-      else strcpy(freqStr, "-");
+      if (freq > 0) sprintf(freqStr, "%d", freq); else strcpy(freqStr, "-");
       int textWidth = u8g2gfx.getUTF8Width(freqStr);
       tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 4, barColor);
-      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2,
-                        y + BAR_H / 2 + 6);
+      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
       u8g2gfx.print(freqStr);
     }
     if (currentFreqIndex >= 0 && currentFreqIndex < 10) {
       int freq = diagnosis_frequencies[diagIdx][currentFreqIndex];
       int y = BAR_Y0 + currentFreqIndex * BAR_H;
-      uint16_t barColor =
-        (freq > 0) ? ILI9341_GREENYELLOW : tft.color565(20, 20, 20);
+      uint16_t barColor = (freq > 0) ? ILI9341_GREENYELLOW : tft.color565(20, 20, 20);
       tft.fillRect(BAR_X, y, BAR_W, BAR_H - 1, barColor);
-      if (freq > 0)
-        tft.drawRect(BAR_X, y, BAR_W, BAR_H - 1, ILI9341_WHITE);
+      if (freq > 0) tft.drawRect(BAR_X, y, BAR_W, BAR_H - 1, ILI9341_WHITE);
       u8g2gfx.setFont(u8g2_font_helvB14_te);
       u8g2gfx.setBackgroundColor(barColor);
       u8g2gfx.setForegroundColor(ILI9341_PINK);
       char freqStr[8];
-      if (freq > 0) sprintf(freqStr, "%d", freq);
-      else strcpy(freqStr, "-");
+      if (freq > 0) sprintf(freqStr, "%d", freq); else strcpy(freqStr, "-");
       int textWidth = u8g2gfx.getUTF8Width(freqStr);
       tft.fillRect(BAR_X + 2, y + 2, BAR_W - 4, BAR_H - 4, barColor);
-      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2,
-                        y + BAR_H / 2 + 6);
+      u8g2gfx.setCursor(BAR_X + (BAR_W - textWidth) / 2, y + BAR_H / 2 + 6);
       u8g2gfx.print(freqStr);
     }
     prevFreqIndex = currentFreqIndex;
   }
-
-  // Update VU level indicator - active signal mode
   int lv = ReadLevelValue();
   DrawLevelIndicator(lv, false, false);
-
-  // Countdown timer
   unsigned long secondsLeft = msLeft / 1000;
   if ((long)msLeft < 0) secondsLeft = 0;
   int minLeft = secondsLeft / 60;
   int secLeft = secondsLeft % 60;
-  char buf[6];
-  sprintf(buf, "%02d:%02d", minLeft, secLeft);
-
+  char buf[6]; sprintf(buf, "%02d:%02d", minLeft, secLeft);
   u8g2gfx.setFont(u8g2_font_fub42_tf);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
-
   int maxDigitW = 0;
-  for (char c = '0'; c <= '9'; c++) {
-    char tmp[2] = {c, 0};
-    int w = u8g2gfx.getUTF8Width(tmp);
-    if (w > maxDigitW) maxDigitW = w;
-  }
+  for (char c = '0'; c <= '9'; c++) { char tmp[2] = {c, 0}; int w = u8g2gfx.getUTF8Width(tmp); if (w > maxDigitW) maxDigitW = w; }
   int colonW = u8g2gfx.getUTF8Width(":");
   int totalW = maxDigitW * 4 + colonW;
   int startX = LEFT_W + (RIGHT_W - totalW) / 2;
-  int cx = startX;
-  int charX[5], charW[5];
+  int cx = startX; int charX[5], charW[5];
   charX[0] = cx; charW[0] = maxDigitW; cx += maxDigitW;
   charX[1] = cx; charW[1] = maxDigitW; cx += maxDigitW;
   charX[2] = cx; charW[2] = colonW;    cx += colonW;
   charX[3] = cx; charW[3] = maxDigitW; cx += maxDigitW;
   charX[4] = cx; charW[4] = maxDigitW;
-
   for (int i = 0; i < 5; i++) {
     if (buf[i] != prevTimeStr[i] || i == 2) {
       tft.fillRect(charX[i], 140, charW[i], 45, ILI9341_BLACK);
@@ -826,9 +672,7 @@ void DisplayTreatInProgressScreen(int currentFreqIndex, int selItem,
   strcpy(prevTimeStr, buf);
 }
 
-// ANGELZ TREATMENT SCREEN - no level indicator
-void DisplayTreatInProgressScreenAngelZ(int freqBarIndex,
-                                        unsigned long msLeft, bool forceFull) {
+void DisplayTreatInProgressScreenAngelZ(int freqBarIndex, unsigned long msLeft, bool forceFull) {
   static bool titleDrawn = false;
   if (forceFull || !titleDrawn) {
     tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
@@ -840,56 +684,32 @@ void DisplayTreatInProgressScreenAngelZ(int freqBarIndex,
     u8g2gfx.print("Angel-Z SESSION");
     titleDrawn = true;
   }
-
-  const int BAR_X = 16;
-  const int BAR_Y = 200;
-  const int RECT_W = 12;
-  const int RECT_H = 40;
-  const int NUM_RECTS = 24;
-
+  const int BAR_X = 16; const int BAR_Y = 200; const int RECT_W = 12; const int RECT_H = 40; const int NUM_RECTS = 24;
   static int prevBarIndex = -1;
   if (forceFull || prevBarIndex != freqBarIndex) {
     int from = 0, to = NUM_RECTS - 1;
-    if (!forceFull && prevBarIndex != -1) {
-      from = min(prevBarIndex, freqBarIndex);
-      to   = max(prevBarIndex, freqBarIndex);
-    }
+    if (!forceFull && prevBarIndex != -1) { from = min(prevBarIndex, freqBarIndex); to = max(prevBarIndex, freqBarIndex); }
     for (int i = from; i <= to; i++) {
       int x = BAR_X + i * RECT_W;
-      uint16_t color =
-        (i <= freqBarIndex) ?
-        ((i < 18) ? ILI9341_GREEN : ILI9341_RED) :
-        ILI9341_DARKGREY;
+      uint16_t color = (i <= freqBarIndex) ? ((i < 18) ? ILI9341_GREEN : ILI9341_RED) : ILI9341_DARKGREY;
       tft.fillRect(x, BAR_Y, RECT_W - 2, RECT_H, color);
     }
     prevBarIndex = freqBarIndex;
   }
-
   unsigned long secondsLeft = msLeft / 1000;
-  int minLeft = secondsLeft / 60;
-  int secLeft = secondsLeft % 60;
-  char buf[6];
-  sprintf(buf, "%02d:%02d", minLeft, secLeft);
-
+  int minLeft = secondsLeft / 60; int secLeft = secondsLeft % 60;
+  char buf[6]; sprintf(buf, "%02d:%02d", minLeft, secLeft);
   u8g2gfx.setFont(u8g2_font_fub42_tf);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   u8g2gfx.setForegroundColor(ILI9341_MAGENTA);
-
-  static bool positionsCalculated = false;
-  static int charX[5];
-  static int charW[5];
+  static bool positionsCalculated = false; static int charX[5]; static int charW[5];
   if (!positionsCalculated) {
     positionsCalculated = true;
     int maxDigitW = 0;
-    for (char c = '0'; c <= '9'; c++) {
-      char tmp[2] = {c, 0};
-      int w = u8g2gfx.getUTF8Width(tmp);
-      if (w > maxDigitW) maxDigitW = w;
-    }
+    for (char c = '0'; c <= '9'; c++) { char tmp[2] = {c, 0}; int w = u8g2gfx.getUTF8Width(tmp); if (w > maxDigitW) maxDigitW = w; }
     int colonW = u8g2gfx.getUTF8Width(":");
     int totalW = maxDigitW * 4 + colonW;
-    int startX = 160 - totalW / 2;
-    int cx = startX;
+    int startX = 160 - totalW / 2; int cx = startX;
     charX[0] = cx; charW[0] = maxDigitW; cx += maxDigitW;
     charX[1] = cx; charW[1] = maxDigitW; cx += maxDigitW;
     charX[2] = cx; charW[2] = colonW;    cx += colonW;
@@ -909,24 +729,18 @@ void DisplayTreatInProgressScreenAngelZ(int freqBarIndex,
   strcpy(prevAngelZTimeStr, buf);
 }
 
-// SD CARD FUNCTIONS
 void CreateDefaultSettingsFile() {
   SD.remove("settings.txt");
   File file = SD.open("settings.txt", FILE_WRITE);
   if (!file) return;
-
   file.println("## Diagnoses section - format: Name:seconds,freq1,freq2,...,freq10");
   file.println("## seconds = time per each non-zero frequency");
   file.println("## Zero frequencies are skipped");
   file.println("[diagnoses]");
-
   int n = sizeof(default_diagnoses_raw) / sizeof(default_diagnoses_raw[0]);
   for (int i = 0; i < n; i++) {
     file.print(default_diagnoses_raw[i]);
-    for (int j = 0; j < 10; j++) {
-      file.print(",");
-      file.print(pgm_read_word(&frequencies[10 * i + j]));
-    }
+    for (int j = 0; j < 10; j++) { file.print(","); file.print(pgm_read_word(&frequencies[10 * i + j])); }
     file.println();
   }
   file.close();
@@ -934,190 +748,94 @@ void CreateDefaultSettingsFile() {
 
 void LoadDefaultDiagnoses() {
   FreeDiagnosisArrays();
-
   int n = sizeof(default_diagnoses_raw) / sizeof(default_diagnoses_raw[0]);
   for (int i = 0; i < n; i++) {
     int freqs[10];
-    for (int j = 0; j < 10; j++) {
-      freqs[j] = pgm_read_word(&frequencies[10 * i + j]);
-    }
+    for (int j = 0; j < 10; j++) freqs[j] = pgm_read_word(&frequencies[10 * i + j]);
     if (!AddDiagnosis(default_diagnoses_raw[i], freqs)) {
       DisplayErrorMessage("RAM full loading defaults", ILI9341_RED);
-      delay(2000);
-      break;
+      delay(2000); break;
     }
   }
 }
 
 void InitializeSDAndSettings() {
-  // FIX - standard SD.begin(csPin) works with the usual Arduino SD library.
+  // FIX - standard SD.begin(csPin) for Arduino SD library
   if (!SD.begin(SD_CS)) {
     DisplayErrorMessage("SD card is not present");
-    delay(3000);
-    LoadDefaultDiagnoses();
-    return;
+    delay(3000); LoadDefaultDiagnoses(); return;
   }
-
   File file = SD.open("settings.txt", FILE_READ);
   bool fileWasMissing = !file;
-
   if (fileWasMissing) {
-    DisplayErrorMessage("settings.txt missing - creating...",
-                        ILI9341_YELLOW);
-    delay(2000);
-    CreateDefaultSettingsFile();
+    DisplayErrorMessage("settings.txt missing - creating...", ILI9341_YELLOW);
+    delay(2000); CreateDefaultSettingsFile();
     DisplayErrorMessage("settings.txt created", ILI9341_GREEN);
-    delay(2000);
-    file = SD.open("settings.txt", FILE_READ);
+    delay(2000); file = SD.open("settings.txt", FILE_READ);
   }
-
-  if (!file) {
-    LoadDefaultDiagnoses();
-    return;
-  }
-
-  bool hasDiagnosesSection = false;
-  String currentSection = "";
-  FreeDiagnosisArrays();
-  bool diagnosesHealthy = true;
-  bool warnShown = false;
-
+  if (!file) { LoadDefaultDiagnoses(); return; }
+  bool hasDiagnosesSection = false; String currentSection = "";
+  FreeDiagnosisArrays(); bool diagnosesHealthy = true; bool warnShown = false;
   while (file.available()) {
-    String line = file.readStringUntil('\n');
-    line.trim();
+    String line = file.readStringUntil('\n'); line.trim();
     if (line.startsWith("##") || line.length() == 0) continue;
-
-    if (line.startsWith("[")) {
-      currentSection = line;
-      if (line.indexOf("[diagnoses]") != -1)
-        hasDiagnosesSection = true;
-      continue;
-    }
-
+    if (line.startsWith("[")) { currentSection = line; if (line.indexOf("[diagnoses]") != -1) hasDiagnosesSection = true; continue; }
     if (currentSection == "[diagnoses]") {
       if (num_diagnoses == WARN_DIAGNOSES_THRESHOLD && !warnShown) {
-        DisplayErrorMessage("Diagnoses > 100, still loading...",
-                            ILI9341_YELLOW);
-        delay(2000);
-        warnShown = true;
+        DisplayErrorMessage("Diagnoses > 100, still loading...", ILI9341_YELLOW);
+        delay(2000); warnShown = true;
       }
-
       int commaCount = 0;
-      for (unsigned int i = 0; i < line.length(); i++) {
-        if (line[i] == ',') commaCount++;
-      }
-      if (commaCount != 10) {
-        diagnosesHealthy = false;
-        debug("Bad comma count: "); debugln(line);
-        continue;
-      }
-
+      for (unsigned int i = 0; i < line.length(); i++) if (line[i] == ',') commaCount++;
+      if (commaCount != 10) { diagnosesHealthy = false; debug("Bad comma count: "); debugln(line); continue; }
       int firstComma = line.indexOf(',');
-      if (firstComma <= 0) {
-        diagnosesHealthy = false;
-        continue;
-      }
-
-      String nameWithTime = line.substring(0, firstComma);
-      nameWithTime.trim();
-
-      if (nameWithTime.indexOf(':') < 0)
-        nameWithTime = nameWithTime + ":60";
-
-      bool freqOk = true;
-      int freqs[10];
-      int pos = firstComma + 1;
+      if (firstComma <= 0) { diagnosesHealthy = false; continue; }
+      String nameWithTime = line.substring(0, firstComma); nameWithTime.trim();
+      if (nameWithTime.indexOf(':') < 0) nameWithTime = nameWithTime + ":60";
+      bool freqOk = true; int freqs[10]; int pos = firstComma + 1;
       for (int f = 0; f < 10; f++) {
-        int nextComma =
-          (f < 9) ? line.indexOf(',', pos) : (int)line.length();
-        if (nextComma == -1 && f < 9) {
-          freqOk = false;
-          break;
-        }
-        String freqStr = line.substring(pos, nextComma);
-        freqStr.trim();
-        if (freqStr.length() == 0) {
-          freqOk = false;
-          break;
-        }
+        int nextComma = (f < 9) ? line.indexOf(',', pos) : (int)line.length();
+        if (nextComma == -1 && f < 9) { freqOk = false; break; }
+        String freqStr = line.substring(pos, nextComma); freqStr.trim();
+        if (freqStr.length() == 0) { freqOk = false; break; }
         bool isNum = true;
-        for (unsigned int k = 0; k < freqStr.length(); k++) {
-          if (!isdigit(freqStr[k])) {
-            isNum = false;
-            break;
-          }
-        }
-        if (!isNum) {
-          freqOk = false;
-          break;
-        }
-        freqs[f] = freqStr.toInt();
-        pos = nextComma + 1;
+        for (unsigned int k = 0; k < freqStr.length(); k++) if (!isdigit(freqStr[k])) { isNum = false; break; }
+        if (!isNum) { freqOk = false; break; }
+        freqs[f] = freqStr.toInt(); pos = nextComma + 1;
       }
-
-      if (!freqOk) {
-        diagnosesHealthy = false;
-        debug("Bad freq in: "); debugln(line);
-        continue;
-      }
-
+      if (!freqOk) { diagnosesHealthy = false; debug("Bad freq in: "); debugln(line); continue; }
       if (!AddDiagnosis(nameWithTime.c_str(), freqs)) {
-        DisplayErrorMessage("RAM exhausted, stopped loading",
-                            ILI9341_RED);
-        delay(2000);
-        break;
+        DisplayErrorMessage("RAM exhausted, stopped loading", ILI9341_RED);
+        delay(2000); break;
       }
     }
   }
   file.close();
-
   if (!hasDiagnosesSection) {
-    DisplayErrorMessage("No [diagnoses] section - creating...",
-                        ILI9341_RED);
-    delay(3000);
-    CreateDefaultSettingsFile();
-    DisplayErrorMessage("[diagnoses] section created",
-                        ILI9341_GREEN);
-    delay(2000);
-    LoadDefaultDiagnoses();
-    return;
+    DisplayErrorMessage("No [diagnoses] section - creating...", ILI9341_RED);
+    delay(3000); CreateDefaultSettingsFile();
+    DisplayErrorMessage("[diagnoses] section created", ILI9341_GREEN);
+    delay(2000); LoadDefaultDiagnoses(); return;
   }
-
   if (!diagnosesHealthy || num_diagnoses == 0) {
-    String err =
-      (num_diagnoses == 0) ?
-      "No diagnoses data" :
-      "Some entries had bad format";
+    String err = (num_diagnoses == 0) ? "No diagnoses data" : "Some entries had bad format";
     DisplayErrorMessage(err.c_str(), ILI9341_YELLOW);
     delay(3000);
-
-    if (num_diagnoses == 0) {
-      CreateDefaultSettingsFile();
-      DisplayErrorMessage("Defaults recreated", ILI9341_GREEN);
-      delay(2000);
-      LoadDefaultDiagnoses();
-    }
+    if (num_diagnoses == 0) { CreateDefaultSettingsFile(); DisplayErrorMessage("Defaults recreated", ILI9341_GREEN); delay(2000); LoadDefaultDiagnoses(); }
   }
 }
 
-// LIST DRAWING
 void DrawList() {
-  tft.fillRect(0, TITLE_BAR_HIGHT, 320,
-               240 - TITLE_BAR_HIGHT, ILI9341_BLACK);
+  tft.fillRect(0, TITLE_BAR_HIGHT, 320, 240 - TITLE_BAR_HIGHT, ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_10x20_t_cyrillic);
   u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   int currentPosY = LIST_Y_START;
-  for (byte currentItem = 0;
-       currentItem < ITEMS_PER_PAGE; currentItem++) {
+  for (byte currentItem = 0; currentItem < ITEMS_PER_PAGE; currentItem++) {
     int diagnoseIndex = pageOffset + currentItem;
     if (diagnoseIndex >= num_diagnoses) break;
     bool isSelected = (diagnoseIndex == (selectedItem - 1));
-    if (isSelected) {
-      tft.fillRect(8, currentPosY - 19, 304, 24, ILI9341_NAVY);
-      u8g2gfx.setForegroundColor(ILI9341_YELLOW);
-    } else {
-      u8g2gfx.setForegroundColor(ILI9341_GREEN);
-    }
+    if (isSelected) { tft.fillRect(8, currentPosY - 19, 304, 24, ILI9341_NAVY); u8g2gfx.setForegroundColor(ILI9341_YELLOW); }
+    else u8g2gfx.setForegroundColor(ILI9341_GREEN);
     u8g2gfx.setCursor(18, currentPosY);
     u8g2gfx.print(diagnosis_names[diagnoseIndex]);
     currentPosY += ITEM_HEIGHT;
@@ -1133,7 +851,6 @@ void RedrawSelectionOnly() {
   u8g2gfx.setForegroundColor(ILI9341_GREEN);
   u8g2gfx.setCursor(18, prevY);
   u8g2gfx.print(diagnosis_names[prevSelectedItem - 1]);
-
   byte newLocalIdx = selectedItem - 1 - pageOffset;
   int newY = LIST_Y_START + newLocalIdx * ITEM_HEIGHT;
   tft.fillRect(8, newY - 19, 304, 24, ILI9341_NAVY);
@@ -1144,270 +861,216 @@ void RedrawSelectionOnly() {
 
 void ScrollItem(bool direction) {
   prevSelectedItem = selectedItem;
-  if (direction == SCROLL_UP) {
-    selectedItem++;
-    if (selectedItem > num_diagnoses) selectedItem = 1;
-  } else {
-    selectedItem--;
-    if (selectedItem < 1) selectedItem = num_diagnoses;
-  }
+  if (direction == SCROLL_UP) { selectedItem++; if (selectedItem > num_diagnoses) selectedItem = 1; }
+  else { selectedItem--; if (selectedItem < 1) selectedItem = num_diagnoses; }
   byte newPageOffset = CalulatePageOffset(selectedItem);
-  if (newPageOffset != pageOffset) {
-    pageOffset = newPageOffset;
-    DrawList();
-  } else {
-    RedrawSelectionOnly();
-  }
+  if (newPageOffset != pageOffset) { pageOffset = newPageOffset; DrawList(); }
+  else RedrawSelectionOnly();
 }
 
-byte CalulatePageOffset(byte item) {
-  return ((item - 1) / ITEMS_PER_PAGE) * ITEMS_PER_PAGE;
-}
+byte CalulatePageOffset(byte item) { return ((item - 1) / ITEMS_PER_PAGE) * ITEMS_PER_PAGE; }
 
-// FIX - one place drives pin 8 and tracks the actual waveform selection.
-// LOW = SIN, HIGH = SQUARE.
+// FIX - one place drives pin 8, LOW = SIN, HIGH = SQUARE
 void SetSignalType(bool sine) {
-  isSineWave = sine;
-  digitalWrite(pinSignalType, sine ? LOW : HIGH);
+  isSineWave = sine; // FIX - keep software state in sync
+  digitalWrite(pinSignalType, sine ? LOW : HIGH); // FIX - reversed: SIN = 0
 }
 
-// Single place that drives pinAmpOutOff
-// LOW = outputs BLOCKED, HIGH = outputs OPEN
 void SetAmpOutput(bool open) {
   ampOutputOpen = open;
   digitalWrite(pinAmpOutOff, open ? HIGH : LOW);
-  debugln(open ? "AMP OUTPUT -> OPEN (HIGH)" :
-                   "AMP OUTPUT -> BLOCKED (LOW)");
+  debugln(open ? "AMP OUTPUT -> OPEN (HIGH)" : "AMP OUTPUT -> BLOCKED (LOW)");
 }
 
-// Single place that drives pinAmpPower
-// LOW = amps ON, HIGH = amps OFF
 void SetAmpPower(bool on) {
   ampPowerOn = on;
   digitalWrite(pinAmpPower, on ? LOW : HIGH);
-  debugln(on ? "AMP POWER -> ON (LOW)" :
-               "AMP POWER -> OFF (HIGH)");
+  debugln(on ? "AMP POWER -> ON (LOW)" : "AMP POWER -> OFF (HIGH)");
 }
 
-// Averaged A1 reading used for short detection
 int ReadShortLevel() {
   long sum = 0;
   for (int i = 0; i < 4; i++) sum += analogRead(pinLevelInput);
   return (int)(sum >> 2);
 }
 
-// Emergency short protection on A1
-// Short -> immediately block pin 13 and mute AD9833.
-// NEW - pin 11 goes HIGH only after OUTPUT_SHORT_DELAY_MS;
-// the delay never postpones the immediate protection.
 void CheckAndHandleAmplifierShort() {
-  unsigned long nowMs = millis();
-  int rawValue = ReadShortLevel();
-  bool ampsPowered = ampPowerOn;
-  bool outputOpen  = ampOutputOpen;
-
+  unsigned long nowMs = millis(); // FIX - single millis snapshot
+  int rawValue = ReadShortLevel(); // FIX - averaged A1
+  bool ampsPowered = ampPowerOn; // FIX - software state, not pin readback
+  bool outputOpen  = ampOutputOpen; // FIX - software state
   static unsigned long lastDbgTime = 0;
-  if (outputOpen && nowMs - lastDbgTime >= 500UL) {
-    lastDbgTime = nowMs;
-    debug("A1 raw: "); debugln(rawValue);
-  }
-
+  if (outputOpen && nowMs - lastDbgTime >= 500UL) { lastDbgTime = nowMs; debug("A1 raw: "); debugln(rawValue); }
   if (emergencyShortDetected) {
-    unsigned long blockedMs = nowMs - shortBlockStartTime;
-
-    if (blockedMs >= SHRT_RETRY_MS) {
-      UnblockAmpOutput();
-      shortRechecking = true;
-      shortRecheckStartTime = millis();
+    // NEW - retry after SHRT_RETRY_MS, pin11 stays HIGH until re-check
+    if (nowMs - shortBlockStartTime >= SHRT_RETRY_MS) {
+      UnblockAmpOutput(); // NEW - re-open for re-check
+      shortRechecking = true; // NEW - re-check window
+      shortRecheckStartTime = nowMs; // NEW - window start
       debugln("EMERGENCY: Re-checking short condition.");
-    } else if (!shortSignalAsserted &&
-               blockedMs >= OUTPUT_SHORT_DELAY_MS) {
-      // NEW - millis() timer: no delay(2000) and no interruption of checks.
-      digitalWrite(pinOutputPause, HIGH);
-      shortSignalAsserted = true;
-      debugln("EMERGENCY: Pin 11 short signal -> HIGH.");
     }
-  } else if (ampsPowered && outputOpen &&
-             rawValue >= SHRT_THRESHOLD_MAX) {
-    debug("EMERGENCY: A1 raw="); debugln(rawValue);
-    BlockAmpOutput();
+  } else if (ampsPowered && outputOpen && rawValue >= SHRT_THRESHOLD_MAX) {
+    debug("EMERGENCY: A1 raw="); debugln(rawValue); // FIX - show level
+    BlockAmpOutput(); // NEW - immediate block, pin11 HIGH immediately
   } else if (shortRechecking) {
     if (nowMs - shortRecheckStartTime >= SHRT_RECHECK_MS) {
       shortRechecking = false;
-      treatmentScreenDrawn = false;
+      treatmentScreenDrawn = false; // NEW - redraw after restore
       DisplayErrorMessage("OUTPUT RESTORED", ILI9341_GREEN);
       debugln("EMERGENCY: Short condition cleared. Output restored.");
     }
   }
-
-  // FIX - pin 8 is a waveform indicator; do not blink it for a short.
+  // FIX - pin8 is waveform indicator, never blink it for short
   if (emergencyShortDetected) {
     if (nowMs - lastShortBeepTime >= SHRT_BEEP_INTERVAL) {
       lastShortBeepTime = nowMs;
       tone(pinBeepOut, SHRT_BEEP_FREQ, SHRT_BEEP_DURATION);
     }
-  } else {
-    noTone(pinBeepOut);
-  }
+  } else noTone(pinBeepOut);
 }
 
-// Block Amp outputs immediately; treatment clock stops
 void BlockAmpOutput() {
-  emergencyShortDetected = true;
-  shortRechecking = false;
-  shortSignalAsserted = false;         // NEW - begin a fresh pin 11 timer
-  shortBlockStartTime = millis();
-  lastShortBeepTime = shortBlockStartTime;
-  SetAmpOutput(false);                 // immediate safety action
-  gen.EnableOutput(false);             // immediate safety action
-  treatmentScreenDrawn = false;        // FIX - redraw after the alert clears
-  tone(pinBeepOut, SHRT_BEEP_FREQ, SHRT_BEEP_DURATION);
-  DisplayAmpBlockedScreen();
+  emergencyShortDetected = true; // NEW - freeze TreatmentClock
+  shortRechecking = false; // NEW - cancel old window
+  shortBlockStartTime = millis(); // NEW - block start
+  lastShortBeepTime = shortBlockStartTime; // NEW - immediate beep timing
+  digitalWrite(pinOutputPause, HIGH); // NEW - inhibit pin11 immediately on short, HIGH = OFF
+  SetAmpOutput(false); // FIX - block pin13 immediately
+  gen.EnableOutput(false); // NEW - mute generator immediately
+  treatmentScreenDrawn = false; // FIX - force redraw after alert
+  tone(pinBeepOut, SHRT_BEEP_FREQ, SHRT_BEEP_DURATION); // NEW - immediate beep
+  DisplayAmpBlockedScreen(); // NEW - alert
 }
 
-// Re-open Amp outputs for the short re-check
 void UnblockAmpOutput() {
-  if (emergencyShortDetected) {
-    shortPausedTotal += millis() - shortBlockStartTime;
+  if (emergencyShortDetected) shortPausedTotal += millis() - shortBlockStartTime; // NEW - exclude blocked time
+  emergencyShortDetected = false;
+  noTone(pinBeepOut);
+  SetAmpOutput(true); // FIX - open pin13 for re-check
+  // NEW - restore pin11 only during treatment, keep inhibited when idle
+  if (isGeneratingFrequency && !batteryLowLatched) {
+    gen.EnableOutput(true); // NEW - restore generator for re-check
+    digitalWrite(pinOutputPause, LOW); // NEW - LOW = enabled for re-check
+  } else {
+    digitalWrite(pinOutputPause, HIGH); // NEW - stay inhibited when idle
   }
-  emergencyShortDetected = false;
-  shortSignalAsserted = false;         // NEW - next short starts its own timer
-  noTone(pinBeepOut);
-
-  // NEW - clear pin 11 while pin 13 is still blocked, then open for re-check.
-  digitalWrite(pinOutputPause, LOW);
-  if (isGeneratingFrequency) gen.EnableOutput(true);
-  SetAmpOutput(true);
 }
 
-// Clear short protection state at start / end / abort
 void ResetShortProtection() {
-  emergencyShortDetected = false;
-  shortRechecking = false;
-  shortSignalAsserted = false;         // NEW - cancel any pending pin 11 signal
-  shortPausedTotal = 0;
+  emergencyShortDetected = false; // NEW - clear block
+  shortRechecking = false; // NEW - clear window
+  shortPausedTotal = 0; // NEW - new session, no paused time
   noTone(pinBeepOut);
 }
 
-// Treatment clock stops while Amp outputs are blocked
 unsigned long TreatmentClock() {
   unsigned long nowMs = millis();
-  unsigned long t = nowMs - shortPausedTotal;
-  if (emergencyShortDetected) t -= (nowMs - shortBlockStartTime);
+  unsigned long t = nowMs - shortPausedTotal; // NEW - exclude blocked time
+  if (emergencyShortDetected) t -= (nowMs - shortBlockStartTime); // NEW - freeze while blocked
   return t;
 }
 
-// Manual release of Amp block
 void ReleaseAmplifierBlock() {
   if (emergencyShortDetected) {
     UnblockAmpOutput();
     shortRechecking = false;
-    DisplayErrorMessage("BLOCK MANUALLY RELEASED",
-                        ILI9341_YELLOW);
+    DisplayErrorMessage("BLOCK MANUALLY RELEASED", ILI9341_YELLOW);
     debugln("Manual release of amplifier block");
   }
 }
 
-// Battery level check, latched alert when level <= 3.3 V
 bool CheckBatteryLow() {
   if (batteryLowLatched) return true;
   if (millis() - lastBatteryCheckTime < BATTERY_CHECK_MS) return false;
   lastBatteryCheckTime = millis();
-
-  if (MeasureBatteryVoltage() <= BATTERY_LOW_V) {
-    batteryLowCount++;
-  } else {
-    batteryLowCount = 0;
-  }
-
+  if (MeasureBatteryVoltage() <= BATTERY_LOW_V) batteryLowCount++;
+  else batteryLowCount = 0;
   if (batteryLowCount >= BATTERY_LOW_COUNT) {
-    batteryLowLatched   = true;
+    batteryLowLatched = true; // NEW - latch until power OFF
     batteryAlertPending = true;
     gen.EnableOutput(false);
-    SetAmpOutput(false);
-    SetAmpPower(false);
-    // FIX - battery shutdown is immediate; it does not use the short timer.
-    digitalWrite(pinOutputPause, HIGH);
-    SetSignalType(true);
+    SetAmpOutput(false); // FIX - block outputs
+    SetAmpPower(false); // FIX - amps OFF
+    digitalWrite(pinOutputPause, HIGH); // FIX - inhibit pin11 immediately, no 2sec on battery
+    SetSignalType(true); // FIX - default SIN = LOW on shutdown
     debugln("BATTERY LOW: outputs blocked, amps OFF.");
   }
   return batteryLowLatched;
 }
 
-// Shared abort sequence
 void AbortTreatment() {
-  // FIX - HIGH inhibits pin 11 output on abort; pending short timer is cleared.
-  digitalWrite(pinOutputPause, HIGH);
-  SetAmpOutput(false);
-  SetAmpPower(false);
+  digitalWrite(pinOutputPause, HIGH); // FIX - HIGH inhibits on abort
+  SetAmpOutput(false); // FIX - block outputs
+  SetAmpPower(false); // FIX - amps OFF
   gen.EnableOutput(false);
-  ResetShortProtection();
-  SetSignalType(true);
+  ResetShortProtection(); // NEW - clear block state
+  SetSignalType(true); // FIX - idle SIN = LOW
 }
 
-// Delay that keeps checking the battery
 void WaitBatterySafe(unsigned long ms) {
   unsigned long start = millis();
   while (millis() - start < ms) {
-    CheckBatteryLow();
-    if (batteryLowLatched) return;
+    CheckBatteryLow(); // FIX - keep battery check alive
+    if (batteryLowLatched) return; // FIX - stop on latch
   }
 }
 
-// ANGELZ SESSION - clean screen, no level indicator
+// NEW - 2 sec non-blocking delay after Enter, before pin11 LOW, with A1 short test
+// NEW - pin11 stays HIGH (disabled) during window, no delay() used
+// NEW - returns false if Enter pressed or battery low, caller must abort
+bool WaitTreatmentStartDelay() {
+  unsigned long preStartBegin = millis(); // NEW - window start
+  while (millis() - preStartBegin < TREATMENT_START_DELAY_MS) {
+    CheckAndHandleAmplifierShort(); // NEW - test output for short during wait
+    CheckBatteryLow(); // NEW - keep battery protection alive
+    if (btnEnterPressed || batteryLowLatched) return false; // NEW - abort during wait
+  }
+  return true; // NEW - wait passed, caller checks emergencyShortDetected
+}
+
 void OpenAngelZ() {
-  // FIX - AngelZ uses SQUARE; keep pin 8 consistent with its waveform.
-  SetSignalType(false);
-  // FIX - permit AngelZ pulses through pin 11; amplifier policy is unchanged.
-  digitalWrite(pinOutputPause, LOW);
+  SetSignalType(false); // FIX - AngelZ SQUARE = HIGH
+  digitalWrite(pinOutputPause, HIGH); // FIX - inhibited during pre-start wait
   tft.fillScreen(ILI9341_BLACK);
-
-  // FIX - first treatment-screen update draws the title only once.
-  prevLevelValue = -1;
-  prevLevelBars = -1;
-  prevLevelNoSignal = true;
-
+  u8g2gfx.setFont(u8g2_font_t0_22b_tf);
+  u8g2gfx.setBackgroundColor(ILI9341_BLUE);
+  u8g2gfx.setForegroundColor(ILI9341_YELLOW);
+  tft.fillRect(0, 0, 320, TITLE_BAR_HIGHT, ILI9341_BLUE);
+  int titleWidth = u8g2gfx.getUTF8Width("Angel-Z SESSION");
+  u8g2gfx.setCursor((320 - titleWidth) / 2, 24);
+  u8g2gfx.print("Angel-Z session");
+  prevLevelValue = -1; prevLevelBars = -1; prevLevelNoSignal = true;
+  // NEW - 2 sec non-blocking delay before AngelZ pulses begin
+  DisplayErrorMessage("Starting, output test...", ILI9341_YELLOW); // NEW - user feedback
+  if (!WaitTreatmentStartDelay()) { // NEW - abort/battery during wait
+    digitalWrite(pinOutputPause, HIGH); // NEW - stay inhibited
+    SetSignalType(true); // FIX - restore SIN
+    return; // NEW - caller draws menu
+  }
+  if (batteryLowLatched) { SetSignalType(true); return; } // NEW - battery stop
+  digitalWrite(pinOutputPause, LOW); // NEW - LOW = enabled after 2sec wait
   Sequences sequences(&gen);
-
   int currentStep = 0;
   unsigned long sessionStart = millis();
-  for (int cycleNumber = 0;
-       cycleNumber < ANGELZ_NUMBER_OF_CYCLES && !batteryLowLatched;
-       ++cycleNumber) {
-    for (int pointNumber = 0;
-         pointNumber < ANGELZ_TOTAL_POINTS; ++pointNumber) {
+  for (int cycleNumber = 0; cycleNumber < ANGELZ_NUMBER_OF_CYCLES && !batteryLowLatched; ++cycleNumber) {
+    for (int pointNumber = 0; pointNumber < ANGELZ_TOTAL_POINTS; ++pointNumber) {
       CheckBatteryLow();
       if (batteryLowLatched) break;
-
       gen.EnableOutput(true);
       sequences.Execute10khzSequence();
       delay(3);
       gen.EnableOutput(false);
-
-      int freqBarIndex =
-        pointNumber * 24 / ANGELZ_TOTAL_POINTS;
+      int freqBarIndex = pointNumber * 24 / ANGELZ_TOTAL_POINTS;
       unsigned long elapsed = millis() - sessionStart;
-      DisplayTreatInProgressScreenAngelZ(
-        freqBarIndex, elapsed, (currentStep == 0)
-      );
-
-      float delayValue = sequences.GetDelaySequence(
-        pointNumber,
-        angelz_valueStart[cycleNumber],
-        angelz_valueMax[cycleNumber],
-        angelz_tau[cycleNumber],
-        ANGELZ_SPLIT_POINT
-      );
+      DisplayTreatInProgressScreenAngelZ(freqBarIndex, elapsed, (currentStep == 0));
+      float delayValue = sequences.GetDelaySequence(pointNumber, angelz_valueStart[cycleNumber], angelz_valueMax[cycleNumber], angelz_tau[cycleNumber], ANGELZ_SPLIT_POINT);
       delay((unsigned long)delayValue);
       currentStep++;
     }
   }
-
   gen.EnableOutput(false);
-  // FIX - inhibit output and return pin 8 to default SIN on every exit.
-  digitalWrite(pinOutputPause, HIGH);
-  SetSignalType(true);
-
+  digitalWrite(pinOutputPause, HIGH); // FIX - inhibit after session
+  SetSignalType(true); // FIX - restore SIN = LOW
   if (!batteryLowLatched) {
     tft.fillScreen(ILI9341_BLACK);
     u8g2gfx.setFont(u8g2_font_helvB24_te);
@@ -1415,200 +1078,101 @@ void OpenAngelZ() {
     int textWidth = u8g2gfx.getUTF8Width("AngelZ Finished!");
     u8g2gfx.setCursor((320 - textWidth) / 2, 120);
     u8g2gfx.print("AngelZ Finished!");
-    // FIX - continue battery checks during the finished-screen pause.
-    WaitBatterySafe(3000);
+    WaitBatterySafe(3000); // FIX - battery-aware pause
   }
-
-  // FIX - caller draws the menu once; do not draw it here as well.
 }
 
-// GENERATE FREQUENCY
 bool GenerateFrequency() {
   int diagIdx = selectedItem - 1;
-  int numFreq = 0;
-  int freqIndices[10];
-
-  for (int i = 0; i < 10; i++) {
-    if (diagnosis_frequencies[diagIdx][i] > 0) {
-      freqIndices[numFreq] = i;
-      numFreq++;
-    }
-  }
-
-  if (numFreq == 0) {
-    // FIX - an all-zero diagnosis must not leave treatment mode active.
-    AbortTreatment();
-    return true;
-  }
-
-  unsigned long secPerFreq =
-    (unsigned long)diagnosis_time_sec[diagIdx];
+  int numFreq = 0; int freqIndices[10];
+  for (int i = 0; i < 10; i++) if (diagnosis_frequencies[diagIdx][i] > 0) { freqIndices[numFreq] = i; numFreq++; }
+  if (numFreq == 0) { AbortTreatment(); return true; } // FIX - all zero must abort
+  unsigned long secPerFreq = (unsigned long)diagnosis_time_sec[diagIdx];
   unsigned long fragmentMs = secPerFreq * 1000UL;
   unsigned long totalSessionMs = fragmentMs * numFreq;
-
-  ResetShortProtection();
-  unsigned long sessionStart = TreatmentClock();
-  lastShortCheckTime = 0;
-  lastShortBeepTime = 0;
-
-  // FIX - configure the first frequency while pin 11 and pin 13 block output.
-  // FIX - this also makes the A1 short check meaningful during stabilization.
-  digitalWrite(pinOutputPause, HIGH);
-  intFreqToGenerate =
-    diagnosis_frequencies[diagIdx][freqIndices[0]];
-  gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE,
-                  REG0, intFreqToGenerate);
+  ResetShortProtection(); // NEW - fresh block state
+  // FIX - configure first frequency while pin11 HIGH (inhibited) and pin13 blocked
+  digitalWrite(pinOutputPause, HIGH); // FIX - HIGH = OFF during setup
+  intFreqToGenerate = diagnosis_frequencies[diagIdx][freqIndices[0]];
+  gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE, REG0, intFreqToGenerate);
   gen.EnableOutput(true);
-  SetSignalType(isSineWave);
-  SetAmpPower(true);
-
-  // FIX - stabilization still checks both abort requests and battery level.
-  unsigned long stabStart = millis();
-  while (millis() - stabStart < AMP_STAB_MS) {
-    CheckAndHandleAmplifierShort();
-    CheckBatteryLow();
-    if (btnEnterPressed || batteryLowLatched) {
-      AbortTreatment();
-      return true;
-    }
+  SetSignalType(isSineWave); // FIX - pin8 in sync
+  SetAmpPower(true); // FIX - amps ON
+  SetAmpOutput(true); // FIX - open pin13 for pre-start A1 test, pin11 still HIGH
+  lastShortCheckTime = 0; lastShortBeepTime = 0;
+  // NEW - 2 sec non-blocking delay BEFORE treatment begins, test output for short
+  // NEW - pin11 stays HIGH here, TreatmentClock not started yet so wait is not counted
+  DisplayErrorMessage("Starting, output test...", ILI9341_YELLOW); // NEW - user feedback during wait
+  if (!WaitTreatmentStartDelay()) { AbortTreatment(); return true; } // NEW - Enter/battery during 2sec
+  if (batteryLowLatched) { AbortTreatment(); return true; } // NEW - battery stop
+  if (!emergencyShortDetected) {
+    // NEW - pre-start test passed, enable pin11 LOW after 2sec
+    gen.EnableOutput(true); // NEW - ensure ON
+    digitalWrite(pinOutputPause, LOW); // NEW - LOW = enabled, only after delay
+  } else {
+    // NEW - short found during pre-start test, stay HIGH, retry loop below handles it
+    gen.EnableOutput(false);
   }
-
-  // FIX - open pin 11 while pin 13 is still blocked, then test A1.
-  digitalWrite(pinOutputPause, LOW);
-  SetAmpOutput(true);
-  stabStart = millis();
-  while (millis() - stabStart < AMP_STAB_MS) {
-    CheckAndHandleAmplifierShort();
-    CheckBatteryLow();
-    if (btnEnterPressed || batteryLowLatched) {
-      AbortTreatment();
-      return true;
-    }
-  }
-
-  unsigned long lastSecond = 0;
-  unsigned long lastLevelUpdate = 0;
-  prevFreqIndex = -1;
-  prevLevelValue = -1;
-  prevLevelBars = -1;
-  prevLevelNoSignal = true;
+  unsigned long sessionStart = TreatmentClock(); // NEW - start clock AFTER 2sec, delay not counted
+  unsigned long lastSecond = 0; unsigned long lastLevelUpdate = 0;
+  prevFreqIndex = -1; prevLevelValue = -1; prevLevelBars = -1; prevLevelNoSignal = true;
   treatmentScreenDrawn = false;
-
   for (int i = 0; i < numFreq; i++) {
-    if (btnEnterPressed || batteryLowLatched) {
-      AbortTreatment();
-      return true;
-    }
-
-    unsigned long fragmentStartMs = TreatmentClock();
-    unsigned long fragmentTargetEnd =
-      fragmentStartMs + fragmentMs;
-
-    intFreqToGenerate =
-      diagnosis_frequencies[diagIdx][freqIndices[i]];
-
+    if (btnEnterPressed || batteryLowLatched) { AbortTreatment(); return true; }
+    unsigned long fragmentStartMs = TreatmentClock(); // NEW - frozen while blocked
+    unsigned long fragmentTargetEnd = fragmentStartMs + fragmentMs;
+    intFreqToGenerate = diagnosis_frequencies[diagIdx][freqIndices[i]];
     unsigned long elapsed = TreatmentClock() - sessionStart;
-    unsigned long msLeft =
-      (elapsed < totalSessionMs) ?
-      (totalSessionMs - elapsed) : 0;
-
+    unsigned long msLeft = (elapsed < totalSessionMs) ? (totalSessionMs - elapsed) : 0;
     if (!emergencyShortDetected) {
-      DisplayTreatInProgressScreen(
-        freqIndices[i], selectedItem,
-        msLeft, !treatmentScreenDrawn
-      );
+      DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft, !treatmentScreenDrawn);
       treatmentScreenDrawn = true;
       UpdateSignalIndicator();
     }
-
-    // FIX - the first frequency was applied before amp stabilization.
-    // Subsequent frequencies are applied while pin 11 is paused HIGH.
-    if (i > 0) {
-      gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE,
-                      REG0, intFreqToGenerate);
-    }
-    if (emergencyShortDetected) {
-      gen.EnableOutput(false);
-    } else {
-      // NEW - never undo the delayed short signal while still blocked.
-      digitalWrite(pinOutputPause, LOW);
-    }
-
+    if (i > 0) gen.ApplySignal(isSineWave ? SINE_WAVE : SQUARE_WAVE, REG0, intFreqToGenerate); // FIX - first freq already applied
+    if (emergencyShortDetected) gen.EnableOutput(false); // FIX - never re-open while blocked
+    else digitalWrite(pinOutputPause, LOW); // NEW - LOW = enabled, immediate between freqs
     while (isGeneratingFrequency) {
       unsigned long now = millis();
-      unsigned long treatNow = TreatmentClock();
-
-      if (!emergencyShortDetected &&
-          treatNow >= fragmentTargetEnd) break;
-
-      if (now - lastShortCheckTime >= SHRT_CHECK_MS) {
-        CheckAndHandleAmplifierShort();
-        lastShortCheckTime = now;
-      }
-
+      unsigned long treatNow = TreatmentClock(); // NEW - frozen while blocked
+      if (!emergencyShortDetected && treatNow >= fragmentTargetEnd) break;
+      if (now - lastShortCheckTime >= SHRT_CHECK_MS) { CheckAndHandleAmplifierShort(); lastShortCheckTime = now; }
       CheckBatteryLow();
-      if (btnEnterPressed || batteryLowLatched) {
-        AbortTreatment();
-        return true;
-      }
-
-      if (emergencyShortDetected) continue;
-
-      // SINE <-> SQUARE
+      if (btnEnterPressed || batteryLowLatched) { AbortTreatment(); return true; }
+      if (emergencyShortDetected) continue; // NEW - wait retry, clock frozen
       if (encoderMoved) {
         int8_t direction = AnalyzeEncoderChange();
         if (direction > 0 && !isSineWave) {
-          SetSignalType(true);          // FIX - SIN drives pin 8 LOW
-          gen.ApplySignal(SINE_WAVE, REG0,
-                          intFreqToGenerate);
+          SetSignalType(true); // FIX - SIN = LOW
+          gen.ApplySignal(SINE_WAVE, REG0, intFreqToGenerate);
           gen.SetOutputSource(REG0);
           UpdateSignalIndicator();
         } else if (direction < 0 && isSineWave) {
-          SetSignalType(false);         // FIX - SQUARE drives pin 8 HIGH
-          gen.ApplySignal(SQUARE_WAVE, REG0,
-                          intFreqToGenerate);
+          SetSignalType(false); // FIX - SQUARE = HIGH
+          gen.ApplySignal(SQUARE_WAVE, REG0, intFreqToGenerate);
           UpdateSignalIndicator();
         }
       }
-
-      if (now - lastLevelUpdate >= 50) {
-        int lv = ReadLevelValue();
-        DrawLevelIndicator(lv, false, false);
-        lastLevelUpdate = now;
-      }
-
+      if (now - lastLevelUpdate >= 50) { int lv = ReadLevelValue(); DrawLevelIndicator(lv, false, false); lastLevelUpdate = now; }
       if (now - lastSecond >= 1000) {
-        unsigned long elapsedTotal =
-          treatNow - sessionStart;
-        unsigned long msLeft2 =
-          (elapsedTotal < totalSessionMs) ?
-          (totalSessionMs - elapsedTotal) : 0;
-        DisplayTreatInProgressScreen(
-          freqIndices[i], selectedItem, msLeft2, false
-        );
+        unsigned long elapsedTotal = treatNow - sessionStart;
+        unsigned long msLeft2 = (elapsedTotal < totalSessionMs) ? (totalSessionMs - elapsedTotal) : 0;
+        DisplayTreatInProgressScreen(freqIndices[i], selectedItem, msLeft2, false);
         UpdateSignalIndicator();
         lastSecond = now;
       }
     }
-
-    // FIX - normal frequency-change pause remains immediate for spike control.
-    digitalWrite(pinOutputPause, HIGH);
+    digitalWrite(pinOutputPause, HIGH); // FIX - immediate HIGH between freqs for spike removal
     prevFreqIndex = freqIndices[i];
-
     if (i < numFreq - 1) PlayTone(ONE_BEEP);
   }
-
   gen.EnableOutput(false);
-  SetAmpOutput(false);
-  SetAmpPower(false);
-
-  unsigned long actualElapsed =
-    TreatmentClock() - sessionStart;
-
+  SetAmpOutput(false); // FIX - block outputs
+  SetAmpPower(false); // FIX - amps OFF
+  unsigned long actualElapsed = TreatmentClock() - sessionStart; // NEW - excludes blocked time
   ResetShortProtection();
   isGeneratingFrequency = false;
-  SetSignalType(true);                 // FIX - idle SIN drives pin 8 LOW
-
+  SetSignalType(true); // FIX - idle SIN = LOW
   tft.fillScreen(ILI9341_BLACK);
   u8g2gfx.setFont(u8g2_font_helvB24_te);
   u8g2gfx.setForegroundColor(ILI9341_GREEN);
@@ -1616,96 +1180,57 @@ bool GenerateFrequency() {
   int textWidth = u8g2gfx.getUTF8Width("Finished!");
   u8g2gfx.setCursor((320 - textWidth) / 2, 120);
   u8g2gfx.print("Finished!");
-
-  int totalMin = (actualElapsed / 1000) / 60;
-  int totalSec = (actualElapsed / 1000) % 60;
-  char timeBuf[20];
-  sprintf(timeBuf, "Time: %02d:%02d",
-          totalMin, totalSec);
+  int totalMin = (actualElapsed / 1000) / 60; int totalSec = (actualElapsed / 1000) % 60;
+  char timeBuf[20]; sprintf(timeBuf, "Time: %02d:%02d", totalMin, totalSec);
   u8g2gfx.setFont(u8g2_font_t0_22b_tf);
   u8g2gfx.setForegroundColor(ILI9341_YELLOW);
   int tw = u8g2gfx.getUTF8Width(timeBuf);
   u8g2gfx.setCursor((320 - tw) / 2, 160);
   u8g2gfx.print(timeBuf);
-
   PlayTone(THREE_BEEPS);
-  // FIX - do not blindly wait or draw the menu after a battery latch.
-  WaitBatterySafe(3000);
+  WaitBatterySafe(3000); // FIX - battery-aware
   if (batteryLowLatched) return true;
-
   titleLine = (char*)"DIAGNOSES:";
   digitalWrite(pinShutdown1, LOW);
   digitalWrite(pinShutdown2, HIGH);
-
-  DrawTitleBar();
-  DrawBattery();
-  DrawList();
-
+  DrawTitleBar(); DrawBattery(); DrawList();
   return false;
 }
 
-// BUTTON HANDLING
 void ProcessButtonClick() {
   if (!isGeneratingFrequency) {
-    // FIX - guard against an empty list if settings could not be loaded.
-    if (num_diagnoses == 0) {
-      DisplayErrorMessage("No diagnoses available", ILI9341_RED);
-      btnEnterPressed = false;
-      return;
-    }
-
+    if (num_diagnoses == 0) { DisplayErrorMessage("No diagnoses available", ILI9341_RED); btnEnterPressed = false; return; } // FIX - empty list guard
     EEPROM.update(eepromAddress, selectedItem);
     titleLine = diagnosis_names[selectedItem - 1];
-    isGeneratingFrequency = true;
-    btnEnterPressed = false;
-
-    if (strcmp(diagnosis_names[selectedItem - 1],
-               "AngelZ") == 0) {
+    isGeneratingFrequency = true; btnEnterPressed = false;
+    if (strcmp(diagnosis_names[selectedItem - 1], "AngelZ") == 0) {
       OpenAngelZ();
-      isGeneratingFrequency = false;
-      btnEnterPressed = false;
+      isGeneratingFrequency = false; btnEnterPressed = false;
       if (batteryLowLatched) return;
-
-      // FIX - draw the menu once after AngelZ, not in both functions.
       titleLine = (char*)"DIAGNOSES:";
-      DrawTitleBar();
-      DrawBattery();
-      SetSelectedItem(selectedItem);
+      DrawTitleBar(); DrawBattery(); SetSelectedItem(selectedItem); // FIX - menu once
       return;
     }
-
     bool aborted = GenerateFrequency();
-    if (batteryLowLatched) {
-      isGeneratingFrequency = false;
-      return;
-    }
+    if (batteryLowLatched) { isGeneratingFrequency = false; return; }
     if (aborted) {
-      isGeneratingFrequency = false;
-      btnEnterPressed = false;
+      isGeneratingFrequency = false; btnEnterPressed = false;
       SetSelectedItem(selectedItem);
       titleLine = (char*)"DIAGNOSES:";
-      DrawTitleBar();
-      DrawBattery();
+      DrawTitleBar(); DrawBattery();
     }
-  } else {
-    btnEnterPressed = true;
-  }
+  } else btnEnterPressed = true;
 }
 
 void Shutdown() {
-  // FIX - stop the signal and amplifier before changing shutdown pins.
-  AbortTreatment();
+  AbortTreatment(); // FIX - stop signal/amps before shutdown pins
   digitalWrite(pinShutdown1, LOW);
   digitalWrite(pinShutdown2, HIGH);
-  isGeneratingFrequency = false;
-  btnEnterPressed = false;
+  isGeneratingFrequency = false; btnEnterPressed = false;
   debugln("Shutdown initiated");
 }
 
-// ENCODER AND BUTTON INTERRUPTS
-void OnScrollChange() {
-  encoderMoved = true;
-}
+void OnScrollChange() { encoderMoved = true; }
 
 int8_t AnalyzeEncoderChange() {
   encoderMoved = false;
@@ -1715,251 +1240,108 @@ int8_t AnalyzeEncoderChange() {
   uint8_t B = digitalRead(pinEncoderCCW);
   uint8_t current_AB = (A << 1) | B;
   uint8_t transition = (prev_AB << 2) | current_AB;
-  static const int8_t deltaTable[16] = {
-    0,-1,1,0,1,0,0,-1,
-    -1,0,0,1,0,1,-1,0
-  };
+  static const int8_t deltaTable[16] = {0,-1,1,0,1,0,0,-1,-1,0,0,1,0,1,-1,0};
   int8_t delta = deltaTable[transition];
-  encoderVal += delta;
-  int8_t result = 0;
-  if (encoderVal <= -4) {
-    result = -1;
-    encoderVal = 0;
-  }
-  if (encoderVal >= 4) {
-    result = 1;
-    encoderVal = 0;
-  }
-  if (encoderVal <= -2) {
-    result = -1;
-    encoderVal += 2;
-  }
-  if (encoderVal >= 2) {
-    result = 1;
-    encoderVal -= 2;
-  }
+  encoderVal += delta; int8_t result = 0;
+  if (encoderVal <= -4) { result = -1; encoderVal = 0; }
+  if (encoderVal >=  4) { result =  1; encoderVal = 0; }
+  if (encoderVal <= -2) { result = -1; encoderVal += 2; }
+  if (encoderVal >=  2) { result =  1; encoderVal -= 2; }
   prev_AB = current_AB;
   return result;
 }
 
 void OnButtonPress() {
-  int buttonState;
-  static int lastButtonStatus = HIGH;
-  static unsigned long longTime = 0ul;
-  static unsigned long shortTime = 0ul;
-
+  int buttonState; static int lastButtonStatus = HIGH; static unsigned long longTime = 0ul; static unsigned long shortTime = 0ul;
   buttonState = digitalRead(pinBtnEnter);
   boolean timeoutShort = (millis() > shortTime);
   boolean timeoutLong  = (millis() > longTime);
-
-  if (buttonState != lastButtonStatus) {
-    shortTime = millis() + DEBOUNCE_DELTA;
-    longTime  = millis() + LONG_DELTA;
-  }
-
-  boolean buttonStateChange =
-    (buttonState != lastButtonStatus);
-  boolean buttonReleased =
-    (buttonStateChange && buttonState == HIGH);
+  if (buttonState != lastButtonStatus) { shortTime = millis() + DEBOUNCE_DELTA; longTime = millis() + LONG_DELTA; }
+  boolean buttonStateChange = (buttonState != lastButtonStatus);
+  boolean buttonReleased = (buttonStateChange && buttonState == HIGH);
   lastButtonStatus = buttonState;
-
-  if (!buttonStateChange) {
-    buttonOutput = STATE_NORMAL | buttonOutput;
-    return;
-  }
-
-  if (timeoutLong && buttonReleased) {
-    buttonOutput = STATE_LONG | buttonOutput;
-    btnEnterPressed = true;
-  } else if (timeoutShort && buttonReleased) {
-    buttonOutput = STATE_SHORT | buttonOutput;
-    btnEnterPressed = true;
-  } else {
-    buttonOutput = STATE_NORMAL | buttonOutput;
-    btnEnterPressed = false;
-  }
+  if (!buttonStateChange) { buttonOutput = STATE_NORMAL | buttonOutput; return; }
+  if (timeoutLong && buttonReleased) { buttonOutput = STATE_LONG | buttonOutput; btnEnterPressed = true; }
+  else if (timeoutShort && buttonReleased) { buttonOutput = STATE_SHORT | buttonOutput; btnEnterPressed = true; }
+  else { buttonOutput = STATE_NORMAL | buttonOutput; btnEnterPressed = false; }
 }
 
-// DECORATIVE DRAWING
-// NEW - compute the inset of one rounded-rectangle scanline using integer math.
+// NEW - inset for one rounded scanline, integer math, no framebuffer
 int RoundedRowInset(int row, int height, int radius) {
   int edge = min(row, height - 1 - row);
   if (edge >= radius) return 0;
-
-  int radialY = radius - edge;
-  int radialX = 0;
-  while ((radialX + 1) * (radialX + 1) +
-         radialY * radialY <= radius * radius) {
-    radialX++;
-  }
+  int radialY = radius - edge; int radialX = 0;
+  while ((radialX + 1) * (radialX + 1) + radialY * radialY <= radius * radius) radialX++;
   return radius - radialX;
 }
 
 void DrawIntroFrame() {
-  const int innerX = FRAME_X + 20;
-  const int innerY = FRAME_Y + 20;
-  const int innerW = FRAME_W - 40;
-  const int innerH = FRAME_H - 40;
+  const int innerX = FRAME_X + 20; const int innerY = FRAME_Y + 20;
+  const int innerW = FRAME_W - 40; const int innerH = FRAME_H - 40;
   const uint16_t frameGold = GOLD1;
-
-  // FIX - one background pass: each pixel receives BLUE, GOLD or BLACK once.
-  // FIX - avoids BLACK -> BLUE -> GOLD -> BLACK full-area repaint flashes.
-  // NEW - scanlines require no 320x240 framebuffer on the Mega2560.
+  // FIX - one pass: each pixel BLUE/GOLD/BLACK once, no full repaint flash
+  // NEW - scanlines need no 320x240 RAM on Mega
   for (int y = 0; y < 240; y++) {
-    if (y < FRAME_Y || y >= FRAME_Y + FRAME_H) {
-      tft.drawFastHLine(0, y, 320, ILI9341_BLUE);
-      continue;
-    }
-
-    int outerInset =
-      RoundedRowInset(y - FRAME_Y, FRAME_H, 24);
+    if (y < FRAME_Y || y >= FRAME_Y + FRAME_H) { tft.drawFastHLine(0, y, 320, ILI9341_BLUE); continue; }
+    int outerInset = RoundedRowInset(y - FRAME_Y, FRAME_H, 24);
     int leftOuter = FRAME_X + outerInset;
-    int rightOuter =
-      FRAME_X + FRAME_W - 1 - outerInset;
-
+    int rightOuter = FRAME_X + FRAME_W - 1 - outerInset;
     tft.drawFastHLine(0, y, leftOuter, ILI9341_BLUE);
-
     if (y < innerY || y >= innerY + innerH) {
-      tft.drawFastHLine(
-        leftOuter, y, rightOuter - leftOuter + 1,
-        frameGold
-      );
+      tft.drawFastHLine(leftOuter, y, rightOuter - leftOuter + 1, frameGold);
     } else {
-      int innerInset =
-        RoundedRowInset(y - innerY, innerH, 8);
+      int innerInset = RoundedRowInset(y - innerY, innerH, 8);
       int leftInner = innerX + innerInset;
-      int rightInner =
-        innerX + innerW - 1 - innerInset;
-
-      tft.drawFastHLine(
-        leftOuter, y, leftInner - leftOuter,
-        frameGold
-      );
-      tft.drawFastHLine(
-        leftInner, y, rightInner - leftInner + 1,
-        ILI9341_BLACK
-      );
-      tft.drawFastHLine(
-        rightInner + 1, y, rightOuter - rightInner,
-        frameGold
-      );
+      int rightInner = innerX + innerW - 1 - innerInset;
+      tft.drawFastHLine(leftOuter, y, leftInner - leftOuter, frameGold);
+      tft.drawFastHLine(leftInner, y, rightInner - leftInner + 1, ILI9341_BLACK);
+      tft.drawFastHLine(rightInner + 1, y, rightOuter - rightInner, frameGold);
     }
-
-    tft.drawFastHLine(
-      rightOuter + 1, y, 319 - rightOuter,
-      ILI9341_BLUE
-    );
+    tft.drawFastHLine(rightOuter + 1, y, 319 - rightOuter, ILI9341_BLUE);
   }
-
-  // Decorative outlines intentionally overlay the finished frame.
-  tft.drawRoundRect(FRAME_X + 5, FRAME_Y + 5,
-                    FRAME_W - 10, FRAME_H - 10, 18, GOLD3);
-  tft.drawRoundRect(FRAME_X + 12, FRAME_Y + 12,
-                    FRAME_W - 24, FRAME_H - 24, 12, GOLD4);
+  tft.drawRoundRect(FRAME_X + 5, FRAME_Y + 5, FRAME_W - 10, FRAME_H - 10, 18, GOLD3);
+  tft.drawRoundRect(FRAME_X + 12, FRAME_Y + 12, FRAME_W - 24, FRAME_H - 24, 12, GOLD4);
   for (int i = 0; i < 20; i++) {
-    tft.drawPixel(
-      FRAME_X + 12 + i,
-      FRAME_Y + 12 + (int)(sin(i * 0.4) * 8),
-      GOLD2
-    );
-    tft.drawPixel(
-      FRAME_X + FRAME_W - 12 - i,
-      FRAME_Y + 12 + (int)(sin(i * 0.4) * 8),
-      GOLD2
-    );
-    tft.drawPixel(
-      FRAME_X + 12 + i,
-      FRAME_Y + FRAME_H - 12 -
-        (int)(sin(i * 0.4) * 8),
-      GOLD2
-    );
-    tft.drawPixel(
-      FRAME_X + FRAME_W - 12 - i,
-      FRAME_Y + FRAME_H - 12 -
-        (int)(sin(i * 0.4) * 8),
-      GOLD2
-    );
+    tft.drawPixel(FRAME_X + 12 + i, FRAME_Y + 12 + (int)(sin(i * 0.4) * 8), GOLD2);
+    tft.drawPixel(FRAME_X + FRAME_W - 12 - i, FRAME_Y + 12 + (int)(sin(i * 0.4) * 8), GOLD2);
+    tft.drawPixel(FRAME_X + 12 + i, FRAME_Y + FRAME_H - 12 - (int)(sin(i * 0.4) * 8), GOLD2);
+    tft.drawPixel(FRAME_X + FRAME_W - 12 - i, FRAME_Y + FRAME_H - 12 - (int)(sin(i * 0.4) * 8), GOLD2);
   }
 }
 
 void DrawGoldenCrown(int cx, int topY) {
-  const int w = 52;
-  const int h = 28;
-  const int baseH = 8;
-  int x0 = cx - w / 2;
-  int y0 = topY;
-  tft.fillRoundRect(x0, y0 + h - baseH,
-                    w, baseH, baseH / 3, GOLD3);
-  tft.drawRoundRect(x0, y0 + h - baseH,
-                    w, baseH, baseH / 3, GOLD1);
-  tft.drawFastHLine(x0 + 3, y0 + h - baseH,
-                    w - 6, GOLD4);
-  tft.drawFastHLine(x0 + 2, y0 + h - 1,
-                    w - 4, GOLD2);
-  for (int i = 0; i < 5; i++) {
-    int gemX = x0 + w * (i + 1) / 6;
-    int gemY = y0 + h - baseH / 2;
-    tft.fillCircle(gemX, gemY, baseH / 3, GOLD1);
-    tft.drawCircle(gemX, gemY, baseH / 3, GOLD4);
-  }
+  const int w = 52; const int h = 28; const int baseH = 8;
+  int x0 = cx - w / 2; int y0 = topY;
+  tft.fillRoundRect(x0, y0 + h - baseH, w, baseH, baseH / 3, GOLD3);
+  tft.drawRoundRect(x0, y0 + h - baseH, w, baseH, baseH / 3, GOLD1);
+  tft.drawFastHLine(x0 + 3, y0 + h - baseH, w - 6, GOLD4);
+  tft.drawFastHLine(x0 + 2, y0 + h - 1, w - 4, GOLD2);
+  for (int i = 0; i < 5; i++) { int gemX = x0 + w * (i + 1) / 6; int gemY = y0 + h - baseH / 2; tft.fillCircle(gemX, gemY, baseH / 3, GOLD1); tft.drawCircle(gemX, gemY, baseH / 3, GOLD4); }
   int peakBaseY = y0 + h - baseH;
-  int leftX   = x0 + w / 4;
-  int centerX = cx;
-  int rightX  = x0 + 3 * w / 4;
-  int leftH   = 12;
-  int centerH = 16;
-  int rightH  = 12;
-  tft.fillTriangle(leftX, peakBaseY,
-                   leftX - 6, peakBaseY - leftH,
-                   leftX + 6, peakBaseY - leftH, GOLD2);
-  tft.fillCircle(leftX, peakBaseY - leftH - 2, 3, GOLD4);
-  tft.drawCircle(leftX, peakBaseY - leftH - 2, 3, GOLD1);
-  tft.fillTriangle(rightX, peakBaseY,
-                   rightX - 6, peakBaseY - rightH,
-                   rightX + 6, peakBaseY - rightH, GOLD2);
-  tft.fillCircle(rightX, peakBaseY - rightH - 2, 3, GOLD4);
-  tft.drawCircle(rightX, peakBaseY - rightH - 2, 3, GOLD1);
-  tft.fillTriangle(centerX, peakBaseY,
-                   centerX - 8, peakBaseY - centerH,
-                   centerX + 8, peakBaseY - centerH, GOLD1);
-  int crossX = centerX;
-  int crossY = peakBaseY - centerH - 3;
-  tft.drawLine(crossX, crossY - 3,
-               crossX, crossY + 3, GOLD4);
-  tft.drawLine(crossX - 3, crossY,
-               crossX + 3, crossY, GOLD4);
+  int leftX = x0 + w / 4; int centerX = cx; int rightX = x0 + 3 * w / 4;
+  int leftH = 12; int centerH = 16; int rightH = 12;
+  tft.fillTriangle(leftX, peakBaseY, leftX - 6, peakBaseY - leftH, leftX + 6, peakBaseY - leftH, GOLD2);
+  tft.fillCircle(leftX, peakBaseY - leftH - 2, 3, GOLD4); tft.drawCircle(leftX, peakBaseY - leftH - 2, 3, GOLD1);
+  tft.fillTriangle(rightX, peakBaseY, rightX - 6, peakBaseY - rightH, rightX + 6, peakBaseY - rightH, GOLD2);
+  tft.fillCircle(rightX, peakBaseY - rightH - 2, 3, GOLD4); tft.drawCircle(rightX, peakBaseY - rightH - 2, 3, GOLD1);
+  tft.fillTriangle(centerX, peakBaseY, centerX - 8, peakBaseY - centerH, centerX + 8, peakBaseY - centerH, GOLD1);
+  int crossX = centerX; int crossY = peakBaseY - centerH - 3;
+  tft.drawLine(crossX, crossY - 3, crossX, crossY + 3, GOLD4);
+  tft.drawLine(crossX - 3, crossY, crossX + 3, crossY, GOLD4);
   tft.fillCircle(crossX, crossY, 2, GOLD3);
-  for (int i = 0; i <= 12; i++) {
-    float t = i / 12.0;
-    int x = leftX + (int)(t * (centerX - leftX));
-    int y = peakBaseY -
-            (int)(leftH * (1 - t)) -
-            (int)(centerH * t) +
-            (int)(4 * sin(t * PI));
-    tft.drawPixel(x, y, GOLD2);
-  }
-  for (int i = 0; i <= 12; i++) {
-    float t = i / 12.0;
-    int x = centerX + (int)(t * (rightX - centerX));
-    int y = peakBaseY -
-            (int)(centerH * (1 - t)) -
-            (int)(rightH * t) +
-            (int)(4 * sin(t * PI));
-    tft.drawPixel(x, y, GOLD2);
-  }
+  for (int i = 0; i <= 12; i++) { float t = i / 12.0; int x = leftX + (int)(t * (centerX - leftX)); int y = peakBaseY - (int)(leftH * (1 - t)) - (int)(centerH * t) + (int)(4 * sin(t * PI)); tft.drawPixel(x, y, GOLD2); }
+  for (int i = 0; i <= 12; i++) { float t = i / 12.0; int x = centerX + (int)(t * (rightX - centerX)); int y = peakBaseY - (int)(centerH * (1 - t)) - (int)(rightH * t) + (int)(4 * sin(t * PI)); tft.drawPixel(x, y, GOLD2); }
   tft.drawPixel(leftX - 3, peakBaseY - leftH / 2, GOLD4);
   tft.drawPixel(rightX + 3, peakBaseY - rightH / 2, GOLD4);
   tft.drawPixel(centerX, peakBaseY - centerH + 2, GOLD4);
 }
 
-// UTILITY
 float MeasureBatteryVoltage() {
   int raw = analogRead(pinBatteryLevel);
   float voltage = (raw * referenceVoltage) / 1024.0;
   return voltage / (R2 / (R1 + R2));
 }
 
-// Beeps use WaitBatterySafe() so a battery drop is not missed
 void PlayTone(int n) {
   for (int i = 0; i < n; i++) {
     if (batteryLowLatched) break;
@@ -1970,123 +1352,61 @@ void PlayTone(int n) {
   }
 }
 
-// SETUP
 void setup() {
   Serial.begin(9600);
-
-  pinMode(pinShutdown1, OUTPUT);
-  pinMode(pinShutdown2, OUTPUT);
-  pinMode(pinSignalType, OUTPUT);
-  pinMode(pinSDPower, OUTPUT);
-  pinMode(pinOutputPause, OUTPUT);
-  pinMode(pinAmpPower, OUTPUT);
-  pinMode(pinAmpOutOff, OUTPUT);
-
-  digitalWrite(pinShutdown1, HIGH);
-  digitalWrite(pinShutdown2, LOW);
-  SetSignalType(true);                   // FIX - default SIN = pin 8 LOW
+  pinMode(pinShutdown1, OUTPUT); pinMode(pinShutdown2, OUTPUT);
+  pinMode(pinSignalType, OUTPUT); pinMode(pinSDPower, OUTPUT);
+  pinMode(pinOutputPause, OUTPUT); pinMode(pinAmpPower, OUTPUT); pinMode(pinAmpOutOff, OUTPUT);
+  digitalWrite(pinShutdown1, HIGH); digitalWrite(pinShutdown2, LOW);
+  SetSignalType(true); // FIX - default SIN = LOW
   digitalWrite(pinSDPower, HIGH);
-  digitalWrite(pinOutputPause, HIGH);    // FIX - idle output inhibited
-  SetAmpPower(false);
-  SetAmpOutput(false);
-
-  pinMode(pinEncoderCW, INPUT_PULLUP);
-  pinMode(pinEncoderCCW, INPUT_PULLUP);
-  pinMode(pinBtnEnter, INPUT_PULLUP);
-  pinMode(pinLevelInput, INPUT);
-
-  tft.begin();
-  tft.setRotation(1);
-  // FIX - no initial BLACK fill; the intro paints the background once.
+  digitalWrite(pinOutputPause, HIGH); // FIX - idle inhibited
+  SetAmpPower(false); SetAmpOutput(false); // FIX - amps OFF, blocked
+  pinMode(pinEncoderCW, INPUT_PULLUP); pinMode(pinEncoderCCW, INPUT_PULLUP);
+  pinMode(pinBtnEnter, INPUT_PULLUP); pinMode(pinLevelInput, INPUT);
+  tft.begin(); tft.setRotation(1);
+  // FIX - no BLACK fill, intro paints once
   u8g2gfx.begin(tft);
-  u8g2gfx.setFontMode(1);
-  u8g2gfx.setFontDirection(0);
-  u8g2gfx.setForegroundColor(ILI9341_GREEN);
-  u8g2gfx.setBackgroundColor(ILI9341_BLACK);
-
+  u8g2gfx.setFontMode(1); u8g2gfx.setFontDirection(0);
+  u8g2gfx.setForegroundColor(ILI9341_GREEN); u8g2gfx.setBackgroundColor(ILI9341_BLACK);
   analogReference(INTERNAL1V1);
-  analogRead(pinLevelInput);             // Dummy ADC settling read
-
-  gen.Begin();
-  gen.EnableOutput(false);
-
+  analogRead(pinLevelInput);
+  gen.Begin(); gen.EnableOutput(false);
   DisplayIntroScreen();
   delay(2500);
-
-  digitalWrite(pinSDPower, LOW);
-  delay(100);
+  digitalWrite(pinSDPower, LOW); delay(100);
   InitializeSDAndSettings();
   digitalWrite(pinSDPower, HIGH);
-
-  DrawTitleBar();
-  DrawBattery();
-
-  // FIX - SetSelectedItem() draws the list; do not draw it beforehand.
+  DrawTitleBar(); DrawBattery();
+  // FIX - SetSelectedItem draws list, no double draw
   byte saved = EEPROM.read(eepromAddress);
-  if (saved >= 1 && (int)saved <= num_diagnoses) {
-    SetSelectedItem(saved);
-  } else {
-    SetSelectedItem(1);
-  }
-
-  // FIX - enable input interrupts after the initial menu is drawn once.
-  attachInterrupt(digitalPinToInterrupt(pinEncoderCW),
-                  OnScrollChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(pinEncoderCCW),
-                  OnScrollChange, CHANGE);
-  attachInterrupt(digitalPinToInterrupt(pinBtnEnter),
-                  OnButtonPress, CHANGE);
+  if (saved >= 1 && (int)saved <= num_diagnoses) SetSelectedItem(saved);
+  else SetSelectedItem(1);
+  // FIX - interrupts after menu drawn once
+  attachInterrupt(digitalPinToInterrupt(pinEncoderCW), OnScrollChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(pinEncoderCCW), OnScrollChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(pinBtnEnter), OnButtonPress, CHANGE);
 }
 
-// MAIN LOOP
 void loop() {
   CheckBatteryLow();
   if (batteryLowLatched) {
     if (ampOutputOpen) SetAmpOutput(false);
     if (ampPowerOn) SetAmpPower(false);
     if (batteryAlertPending) ShowBatteryLowAlert();
-    if (btnEnterPressed) {
-      if (buttonOutput == STATE_LONG) Shutdown();
-      buttonOutput = STATE_NORMAL;
-      btnEnterPressed = false;
-    }
+    if (btnEnterPressed) { if (buttonOutput == STATE_LONG) Shutdown(); buttonOutput = STATE_NORMAL; btnEnterPressed = false; }
     return;
   }
-
-  if (millis() - lastShortCheckTime >= 200) {
-    CheckAndHandleAmplifierShort();
-    lastShortCheckTime = millis();
-  }
-
+  if (millis() - lastShortCheckTime >= 200) { CheckAndHandleAmplifierShort(); lastShortCheckTime = millis(); }
   if (encoderMoved) {
     int8_t direction = AnalyzeEncoderChange();
-    if (direction != 0 && !isGeneratingFrequency) {
-      ScrollItem(direction > 0 ?
-                 SCROLL_UP : SCROLL_DOWN);
-    }
+    if (direction != 0 && !isGeneratingFrequency) ScrollItem(direction > 0 ? SCROLL_UP : SCROLL_DOWN);
   }
-
   if (btnEnterPressed) {
     switch (buttonOutput) {
-      case STATE_SHORT:
-        ProcessButtonClick();
-        buttonOutput = STATE_NORMAL;
-        break;
-      case STATE_LONG:
-        Shutdown();
-        buttonOutput = STATE_NORMAL;
-        break;
+      case STATE_SHORT: ProcessButtonClick(); buttonOutput = STATE_NORMAL; break;
+      case STATE_LONG: Shutdown(); buttonOutput = STATE_NORMAL; break;
     }
     btnEnterPressed = false;
   }
 }
-/*
-
-**Verification still required on your Mega2560:**
-
-1. Compile with the versions of **AD9833, U8g2, Adafruit GFX, Adafruit ILI9341, and SD** installed for this sketch. For Arduino CLI, the board target is `arduino:avr:mega:cpu=atmega2560`.
-2. With a logic analyzer, check **pin 8: SIN LOW, SQUARE HIGH**, including startup, waveform changes, abort, and AngelZ.
-3. During an active-frequency short, check **pin 13 LOW immediately**; **pin 11 remains LOW for approximately 2 seconds**, then goes HIGH. At the configured retry time, pin 11 goes LOW *before* pin 13 reopens. A recurring short must restart the two-second timer.
-4. Check abort and low battery separately: both inhibit pin 11 **immediately**, without waiting two seconds.
-5. Confirm the A1 short threshold and battery voltage under load on the real hardware. Those electrical conditions—and the observed TFT flash—cannot be validated from source review alone.
-*/
