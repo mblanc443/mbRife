@@ -57,8 +57,8 @@
 #define pinOutputPause  11  // High = OFF blocks output signal, Low = ON unblocks output signal
 #define pinAmpPower     12  // High = OFF (power OFF) used to enable power for amplifiers
 #define pinAmpOutOff    13  // Low = BLOCKED, High = OPEN outputs for amplifiers
-#define pinBtnEnter     21. // Start/Finish treament
-#define pinBatteryLevel A0. // Battery level measurement
+#define pinBtnEnter     21  // Start/Finish treament
+#define pinBatteryLevel A0  // Battery level measurement
 #define pinLevelInput   A1  // measures level of output signal during treatment
 #define TFT_CS          53
 #define TFT_DC          48
